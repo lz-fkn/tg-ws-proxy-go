@@ -1,129 +1,63 @@
-# TG WS Proxy Go for embedded devices ([FAQ](https://github.com/Flowseal/tg-ws-proxy/issues/389))
+# TG WS Proxy Go для НЕвстроенных устройств
 
-### Install
+### Предисловие
 
-> KeeneticOS
-Repository:
-```shell
-curl -fsSL https://raw.githubusercontent.com/spatiumstas/feedly/main/add-repo.sh | sh
-```
-Package:
-```shell
-opkg install tg-ws-proxy
-```
+изначально я пользовался оригинальным прокси на питоне, но т.к. прокси крутился на бедном одноплатнике с 1гб памяти, тратить 200+ мб на один прокси для тг было слишком расточительно. мне приглянулся его форк, переписанный на гоу, но сделанный для всяких встроенных устройств по типу роутеров. мне лично такое нахуй не упало, поэтому немного подобрав этот форк под себя (заменил логгинг на свой простой, пусть systemd с ними ебётся), получилась вот такая поебота. нихуя в целом не поменялось, но из-за того что моды делались для околодесктопа логи могут быть слишком жирными, да и если вид репы вас не устраивает то мне похуй, делал для себя
 
-> OpenWRT (IPK, APK)
-Insert package link from Releases
+### Сборка
 
-```shell
-opkg install %link%
-```
-APK
-```shell
-wget -O "/etc/apk/keys/tg-ws-proxy.pem" "https://github.com/spatiumstas/tg-ws-proxy-go/releases/download/0.4/tg-ws-proxy.pem"
-apk add %link%
+надеюсь го и гит у вас есть, если нет то сами найдёте в инете, не маленькие
+```bash
+go version # нужна хотя бы >1.22
+
+git clone -b main-go https://github.com/lz-fkn/tg-ws-proxy-go
+go mod tidy
+go build -ldflags="-s -w" 
 ```
 
-### Config
+### Использование
+вместо всяких конфиг файлов и прочего говна теперь просто аргументы (они и так были, но...)
 
-Main config file:
-
-```shell
-# Entware (KeeneticOS):
-#   /opt/etc/tg-ws-proxy/config.conf
-#   /opt/etc/tg-ws-proxy/secret.conf
-# OpenWrt/generic opkg:
-#   /etc/tg-ws-proxy/config.conf
-#   /etc/tg-ws-proxy/secret.conf
 ```
-
-Minimal config example:
-
-```conf
-# config.conf
-HOST=0.0.0.0
-PORT=1443
-LOG_LEVEL=0
-DC_IP_DEFAULT=149.154.167.220
-DC_IP_DEFAULT_POOL=""
-FAKE_TLS_DOMAIN=""
-CFPROXY_DOMAINS=""
-CFPROXY_DOMAINS_URL="https://raw.githubusercontent.com/Flowseal/tg-ws-proxy/main/.github/cfproxy-domains.txt"
-EXTRA_ARGS=""
-
-# secret.conf
-SECRET=
-```
-
-> Notes:
-
-1. `SECRET` must be 32 hex chars. If empty, it is auto-generated during install.
-2. `DC_IP_DEFAULT` and `DC_IP_DEFAULT_POOL` are global defaults for implicit DC map (`2,4`).
-3. `EXTRA_ARGS` is for per-DC overrides and extra runtime flags, [CFProxy](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfProxy.md)
-4. Full list of available commands `--help`
-5. `FAKE_TLS_DOMAIN` enables Fake TLS mode (`ee` secret link). Keep empty for standard `dd` mode.
-6. `CFPROXY_DOMAINS` - local fallback domain list.
-7. `CFPROXY_DOMAINS_URL` [default value](https://raw.githubusercontent.com/Flowseal/tg-ws-proxy/main/.github/cfproxy-domains.txt)
-
-Override examples:
-
-```conf
-# Per-DC pool override (DC2)
-EXTRA_ARGS="--dc-ip-pool 2:149.154.175.50,149.154.167.220"
-
-# Per-DC single IP override (DC203) + verbose logs
-EXTRA_ARGS="--dc-ip 203:91.105.192.100 -v"
-
-# Fake TLS mode (ee-secret)
-FAKE_TLS_DOMAIN="example.com"
-```
-
-### Run
-
-```shell
-# Entware (KeeneticOS)
-/opt/etc/init.d/S61tg-ws-proxy start
-/opt/etc/init.d/S61tg-ws-proxy status
-/opt/etc/init.d/S61tg-ws-proxy restart
-/opt/etc/init.d/S61tg-ws-proxy stop
-
-# OpenWrt/generic OPKG
-service tg-ws-proxy start
-service tg-ws-proxy status
-service tg-ws-proxy restart
-service tg-ws-proxy stop
-```
-
-### Logs
-
-If `LOG_LEVEL=1`, service logs are written to:
-
-```shell
-# Entware (KeeneticOS): /opt/var/log/tg-ws-proxy.log
-# OpenWrt/generic OPKG: /var/log/tg-ws-proxy.log
-```
-
-### Build from profile
-
-```shell
-cp config/entware/aarch64-3.10.config .config
-make package
-```
-
-Output package:
-
-```shell
-.build/tg-ws-proxy_<version>-1_<platform>_<target>.ipk
-```
-
-### Remove
-
-```shell
-opkg remove tg-ws-proxy
-```
-
-### Remove repository
-
-```shell
-rm /opt/etc/opkg/feedly.conf
+Usage of ../tg-ws-proxy-go:
+  -buf-kb int
+        Socket buffer size in KB (default 256)
+  -cfproxy-domain string
+        Cloudflare-proxied domain for WS fallback (default "pclead.co.uk")
+  -cfproxy-domains string
+        Comma-separated Cloudflare proxy domain pool for WS fallback
+  -cfproxy-domains-url string
+        URL to fetch CF proxy domain list from (default "https://raw.githubusercontent.com/Flowseal/tg-ws-proxy/main/.github/cfproxy-domains.txt")
+  -cfproxy-priority
+        Try cfproxy before TCP fallback (default true)
+  -credits
+        Show credits and exit
+  -dc-ip value
+        Target DC IP as DC:IP; repeatable
+  -dc-ip-default string
+        Default WS target IP for all implicit DCs when --dc-ip is not provided (default "149.154.167.220")
+  -dc-ip-default-pool string
+        Default WS target IP pool for implicit DCs, comma-separated
+  -dc-ip-pool value
+        Target pool as DC:IP1,IP2,...; repeatable
+  -fake-tls-domain string
+        Enable Fake TLS (ee-secret) with masking domain
+  -gen-secret
+        Generate random secret and print it
+  -host string
+        Listen host (default "127.0.0.1")
+  -loglevel int
+        Log Level (0=FATAL, 1=ERROR, 2=WARN, 3=INFO, 4=VERBOSE) (default 3)
+  -max-conns int
+        Max concurrent client sessions (default 1024)
+  -no-cfproxy
+        Disable Cloudflare proxy fallback
+  -no-cfproxy-domain-refresh
+        Disable periodic CF proxy domain refresh from URL
+  -pool-size int
+        WS pool size per DC (default 4)
+  -port int
+        Listen port (default 1443)
+  -secret string
+        MTProto secret (32 hex chars)
 ```

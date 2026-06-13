@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"log"
 	"math/big"
 	"net"
 	"time"
@@ -28,7 +27,7 @@ const (
 )
 
 var (
-	fakeTLSCCSFrame = []byte{0x14, 0x03, 0x03, 0x00, 0x01, 0x01}
+	fakeTLSCCSFrame            = []byte{0x14, 0x03, 0x03, 0x00, 0x01, 0x01}
 	fakeTLSServerHelloTemplate = []byte{
 		0x16, 0x03, 0x03, 0x00, 0x7a,
 		0x02, 0x00, 0x00, 0x76,
@@ -58,14 +57,21 @@ type fakeTLSConn struct {
 	readBuf []byte
 }
 
-func fakeTLSConnectLink(host string, port int, secretHex, domain string) string {
+func fakeTLSConnectLink(host string, port int, secretHex, domain string) (string, string) {
 	return fmt.Sprintf(
-		"tg://proxy?server=%s&port=%d&secret=ee%s%s",
-		host,
-		port,
-		secretHex,
-		hex.EncodeToString([]byte(domain)),
-	)
+			"tg://proxy?server=%s&port=%d&secret=ee%s%s",
+			host,
+			port,
+			secretHex,
+			hex.EncodeToString([]byte(domain)),
+		),
+		fmt.Sprintf(
+			"https://t.me/proxy?server=%s&port=%d&secret=ee%s%s",
+			host,
+			port,
+			secretHex,
+			hex.EncodeToString([]byte(domain)),
+		)
 }
 
 func acceptFakeTLSClient(client net.Conn, secret []byte, maskingDomain string, label string) (net.Conn, []byte, bool) {
@@ -98,14 +104,14 @@ func acceptFakeTLSClient(client net.Conn, secret []byte, maskingDomain string, l
 
 	clientRandom, sessionID, ok := verifyFakeTLSClientHello(clientHello, secret)
 	if !ok {
-		log.Printf("INFO   [%s] Fake TLS verify failed -> masking", label)
+		Info("[%s] Fake TLS verify failed -> masking", label)
 		proxyToMaskingDomain(client, clientHello, maskingDomain, label)
 		return nil, nil, false
 	}
 
 	serverHello, err := buildFakeTLSServerHello(secret, clientRandom, sessionID)
 	if err != nil {
-		log.Printf("WARN   [%s] Fake TLS server hello build failed: %v", label, err)
+		Warn("[%s] Fake TLS server hello build failed: %v", label, err)
 		return nil, nil, false
 	}
 	_ = client.SetWriteDeadline(time.Now().Add(10 * time.Second))
@@ -218,12 +224,12 @@ func writeFakeTLSRedirect(client net.Conn, domain string) error {
 func proxyToMaskingDomain(client net.Conn, initial []byte, domain string, label string) {
 	upstream, err := net.DialTimeout("tcp", net.JoinHostPort(domain, "443"), 10*time.Second)
 	if err != nil {
-		log.Printf("INFO   [%s] masking connect failed: %v", label, err)
+		Info("[%s] masking connect failed: %v", label, err)
 		return
 	}
 	defer upstream.Close()
 
-	log.Printf("INFO   [%s] masking -> %s:443", label, domain)
+	Info("[%s] masking -> %s:443", label, domain)
 	if len(initial) > 0 {
 		_ = upstream.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		if _, err := upstream.Write(initial); err != nil {

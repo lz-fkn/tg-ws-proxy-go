@@ -103,5 +103,5 @@ func warmupPool(cfg *Config) {
 			pool.mu.Unlock()
 		}
 	}
-	logf("INFO   WS pool warmup started for %d DC(s)", len(cfg.DCMap))
+	Info("WS pool warmup started for %d DC(s)", len(cfg.DCMap))
 }

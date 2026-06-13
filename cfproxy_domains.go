@@ -3,13 +3,14 @@ package main
 import (
 	"fmt"
 	"io"
-	"log"
 	"math/rand"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/net/idna"
 )
 
 var (
@@ -47,8 +48,18 @@ func parseCFProxyDomainCSV(raw string) ([]string, error) {
 	return out, nil
 }
 
+/* OLD
 func normalizeCFProxyDomain(raw string) string {
 	return strings.ToLower(strings.Trim(strings.TrimSpace(raw), "."))
+} */
+
+func normalizeCFProxyDomain(raw string) string {
+	cleaned := strings.Trim(strings.TrimSpace(raw), ".")
+	domain, err := idna.ToASCII(cleaned)
+	if err != nil {
+		return strings.ToLower(cleaned)
+	}
+	return domain
 }
 
 func appendUniqueDomains(dst []string, domains ...string) []string {
@@ -241,17 +252,17 @@ func startCFProxyDomainRefresh(cfg *Config) {
 	if cfg == nil || !cfg.FallbackCFProxy || !cfg.FallbackCFProxyRefresh || cfg.FallbackCFProxyUserDomain || strings.TrimSpace(cfg.FallbackCFProxyDomainsURL) == "" {
 		return
 	}
-	log.Printf("INFO   CF proxy domain refresh scheduled: url=%s interval=%s", cfg.FallbackCFProxyDomainsURL, defaultCFProxyRefreshInterval)
+	Info("CF proxy domain refresh scheduled: url=%s interval=%s", cfg.FallbackCFProxyDomainsURL, defaultCFProxyRefreshInterval)
 
 	go func() {
 		refresh := func() {
 			domains, err := fetchCFProxyDomains(cfg.FallbackCFProxyDomainsURL, defaultCFProxyRefreshTimeout)
 			if err != nil {
-				log.Printf("WARN   CF proxy domain refresh failed: %v", err)
+				Warn("CF proxy domain refresh failed: %v", err)
 				return
 			}
 			cfg.setCFProxyDomains(domains)
-			log.Printf("INFO   CF proxy domain pool updated from GitHub (%d domains): %s", len(domains), strings.Join(domains, ", "))
+			Info("CF proxy domain pool updated from GitHub (%d domains): %s", len(domains), strings.Join(domains, ", "))
 		}
 
 		refresh()

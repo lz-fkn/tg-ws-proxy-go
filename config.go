@@ -6,7 +6,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"log"
 	"net"
 	"os"
 	"strconv"
@@ -18,29 +17,28 @@ func parseFlags() (*Config, error) {
 	port := flag.Int("port", 1443, "Listen port")
 	secret := flag.String("secret", "", "MTProto secret (32 hex chars)")
 	genSecret := flag.Bool("gen-secret", false, "Generate random secret and print it")
-	verbose := flag.Bool("v", false, "Verbose logs")
-	logFile := flag.String("log-file", "", "Log file path")
-	logMaxMB := flag.Float64("log-max-mb", 5, "Max log file size before rotate")
-	logBackups := flag.Int("log-backups", 0, "Number of rotated backups")
+	logLevel := flag.Int("loglevel", 3, "Log Level (0=FATAL, 1=ERROR, 2=WARN, 3=INFO, 4=VERBOSE)")
 	bufKB := flag.Int("buf-kb", 256, "Socket buffer size in KB")
 	poolSize := flag.Int("pool-size", 4, "WS pool size per DC")
-	fakeTLSDomain := flag.String("fake-tls-domain", "", "Enable Fake TLS (ee-secret) with masking domain")
+	fakeTLSDomain := flag.String("fake-tls-domain", "", "Enable Fake TLS (ee-secret) with masking domain (https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/FakeTlsNginx.md)")
 	cfproxyDomain := flag.String("cfproxy-domain", defaultCFProxyDomain, "Cloudflare-proxied domain for WS fallback")
 	cfproxyDomains := flag.String("cfproxy-domains", "", "Comma-separated Cloudflare proxy domain pool for WS fallback")
 	noCfproxy := flag.Bool("no-cfproxy", false, "Disable Cloudflare proxy fallback")
 	cfproxyPriority := flag.Bool("cfproxy-priority", true, "Try cfproxy before TCP fallback")
 	noCfproxyDomainRefresh := flag.Bool("no-cfproxy-domain-refresh", false, "Disable periodic CF proxy domain refresh from URL")
-	cfproxyDomainsURL := flag.String("cfproxy-domains-url", "", "URL to fetch CF proxy domain list from")
+	cfproxyDomainsURL := flag.String("cfproxy-domains-url", defaultCFProxyDomainsURL, "URL to fetch CF proxy domain list from")
 	maxConns := flag.Int("max-conns", defaultMaxConns, "Max concurrent client sessions")
 	dcIPDefault := flag.String("dc-ip-default", "149.154.167.220", "Default WS target IP for all implicit DCs when --dc-ip is not provided")
 	dcIPDefaultPool := flag.String("dc-ip-default-pool", "", "Default WS target IP pool for implicit DCs, comma-separated")
-	pprofListen := flag.String("pprof-listen", "", "Optional pprof listen address (e.g. 127.0.0.1:6060)")
+	credits := flag.Bool("credits", false, "Show credits and exit")
 
 	var dcIPs multiFlag
 	var dcIPPools multiFlag
 	flag.Var(&dcIPs, "dc-ip", "Target DC IP as DC:IP; repeatable")
 	flag.Var(&dcIPPools, "dc-ip-pool", "Target pool as DC:IP1,IP2,...; repeatable")
 	flag.Parse()
+
+	LogLevel = *logLevel
 
 	if *secret == "" {
 		b := make([]byte, 16)
@@ -49,7 +47,7 @@ func parseFlags() (*Config, error) {
 		}
 		*secret = hex.EncodeToString(b)
 		if !*genSecret {
-			log.Printf("INFO   Generated secret: %s", *secret)
+			Info("Generated secret: %s", *secret)
 		}
 	}
 	if len(*secret) != 32 {
@@ -149,30 +147,26 @@ func parseFlags() (*Config, error) {
 	}
 
 	cfg := &Config{
-		Host:        *host,
-		Port:        *port,
-		SecretHex:   *secret,
-		GenSecret:   *genSecret,
-		FakeTLSDomain: normalizedFakeTLSDomain,
-		DCMap:       dcMap,
-		DCPool:      dcPool,
-		FallbackCFProxy:         !*noCfproxy,
-		FallbackCFProxyPriority: *cfproxyPriority,
-		FallbackCFProxyDomain:   "",
-		FallbackCFProxyUserDomain: userFixedDomain || userPoolProvided,
-		FallbackCFProxyRefresh:    !*noCfproxyDomainRefresh,
-		FallbackCFProxyDomainsURL: strings.TrimSpace(*cfproxyDomainsURL),
-		FallbackCFProxyDomains:    nil,
-		FallbackCFProxyActive:     "",
+		Host:                       *host,
+		Port:                       *port,
+		SecretHex:                  *secret,
+		GenSecret:                  *genSecret,
+		FakeTLSDomain:              normalizedFakeTLSDomain,
+		DCMap:                      dcMap,
+		DCPool:                     dcPool,
+		FallbackCFProxy:            !*noCfproxy,
+		FallbackCFProxyPriority:    *cfproxyPriority,
+		FallbackCFProxyDomain:      "",
+		FallbackCFProxyUserDomain:  userFixedDomain || userPoolProvided,
+		FallbackCFProxyRefresh:     !*noCfproxyDomainRefresh,
+		FallbackCFProxyDomainsURL:  strings.TrimSpace(*cfproxyDomainsURL),
+		FallbackCFProxyDomains:     nil,
+		FallbackCFProxyActive:      "",
 		FallbackCFProxyPerDCActive: make(map[int]string),
-		Verbose:     *verbose,
-		BufKB:       maxInt(*bufKB, 4),
-		PoolSize:    maxInt(*poolSize, 0),
-		MaxConns:    maxInt(*maxConns, 1),
-		LogFile:     *logFile,
-		LogMaxMB:    *logMaxMB,
-		LogBackups:  maxInt(*logBackups, 0),
-		PprofListen: strings.TrimSpace(*pprofListen),
+		BufKB:                      maxInt(*bufKB, 4),
+		PoolSize:                   maxInt(*poolSize, 0),
+		MaxConns:                   maxInt(*maxConns, 1),
+		Credits:                    *credits,
 	}
 
 	cfg.setCFProxyDomains(domainPool)

@@ -1,5 +1,0 @@
-#!/bin/sh
-
-service tg-ws-proxy stop
-
-exit 0

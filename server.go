@@ -4,8 +4,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"log"
 	"net"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -17,29 +17,42 @@ import (
 func main() {
 	cfg, err := parseFlags()
 	if err != nil {
-		log.Fatalf("config error: %v", err)
+		Fatal("config error: %v", err)
 	}
 	if cfg.GenSecret {
 		fmt.Println(cfg.SecretHex)
 		return
 	}
+	if cfg.Credits {
+		Info("%s", strings.Repeat("=", 75))
+		PrintLogo()
+		Info("  Telegram MTProto WS Bridge Proxy (Go)")
+		Info("  ")
+		Info("  tg-ws-proxy by Flowseal (https://github.com/Flowseal/tg-ws-proxy)")
+		Info("  Go Port of it by spatiumstas (https://github.com/spatiumstas/tg-ws-proxy-go)")
+		Info("  Some mods by Elzzie (https://github.com/lz-fkn/tg-ws-proxy-go)")
+		Info("%s", strings.Repeat("=", 75))
+		return
+	}
 
-	initLogger(cfg)
-	startPprof(cfg)
-	startCFProxyDomainRefresh(cfg)
+	//initLogger(cfg)
+	//startPprof(cfg)
 
 	linkHost := getLinkHost(cfg.Host)
-	log.Printf("INFO   %s", strings.Repeat("=", 60))
-	log.Printf("INFO     Telegram MTProto WS Bridge Proxy (Go)")
-	log.Printf("INFO     Listening on   %s:%d", cfg.Host, cfg.Port)
-	log.Printf("INFO     Secret:        %s", cfg.SecretHex)
+	Info("%s", strings.Repeat("=", 75))
+	PrintLogo()
+	Info("  Telegram MTProto WS Bridge Proxy (Go)")
+	Info("  ")
+	Info("  OS/Arch:       %s", getOSArch())
+	Info("  Listening on   %s:%d", cfg.Host, cfg.Port)
+	Info("  Secret:        %s", cfg.SecretHex)
 	if cfg.FakeTLSDomain != "" {
-		log.Printf("INFO     Fake TLS:      %s", cfg.FakeTLSDomain)
+		Info("  Fake TLS:      %s", cfg.FakeTLSDomain)
 	}
-	log.Printf("INFO     Target DC IPs:")
+	Info("  Target DC IPs:")
 	for _, item := range sortedDCMap(cfg.DCMap) {
 		dc, ip := item.dc, item.ip
-		log.Printf("INFO       DC%d: %s", dc, ip)
+		Info("    DC%d: %s", dc, ip)
 	}
 	if cfg.FallbackCFProxy {
 		prio := "TCP first"
@@ -50,21 +63,26 @@ func main() {
 		if cfg.FallbackCFProxyRefresh && !cfg.FallbackCFProxyUserDomain && strings.TrimSpace(cfg.FallbackCFProxyDomainsURL) != "" {
 			refreshMode = "startup"
 		}
-		log.Printf("INFO     CF proxy:      active=%s pool=%d (%s, refresh=%s)", cfg.cfproxyActiveDomain(), cfg.cfproxyDomainPoolSize(), prio, refreshMode)
+		Info("  CF proxy:      active=%s pool=%d (%s, refresh=%s)", cfg.cfproxyActiveDomain(), cfg.cfproxyDomainPoolSize(), prio, refreshMode)
 	}
-	log.Printf("INFO   %s", strings.Repeat("=", 60))
-	log.Printf("INFO     Connect link:")
+	Info("%s", strings.Repeat("=", 75))
+	Info("  Connect URL:")
 	if cfg.FakeTLSDomain != "" {
-		log.Printf("INFO       %s", fakeTLSConnectLink(linkHost, cfg.Port, cfg.SecretHex, cfg.FakeTLSDomain))
+		tgURL, httpsURL := fakeTLSConnectLink(linkHost, cfg.Port, cfg.SecretHex, cfg.FakeTLSDomain)
+		Info("    %s", tgURL)
+		Info("    %s", httpsURL)
 	} else {
-		log.Printf("INFO       tg://proxy?server=%s&port=%d&secret=dd%s", linkHost, cfg.Port, cfg.SecretHex)
+		Info("    tg://proxy?server=%s&port=%d&secret=dd%s", linkHost, cfg.Port, cfg.SecretHex)
+		Info("    https://t.me/proxy?server=%s&port=%d&secret=dd%s", linkHost, cfg.Port, cfg.SecretHex)
 	}
-	log.Printf("INFO   %s", strings.Repeat("=", 60))
+	Info("%s", strings.Repeat("=", 75))
+
+	startCFProxyDomainRefresh(cfg)
 
 	go func() {
 		for {
 			time.Sleep(60 * time.Second)
-			log.Printf("INFO   stats: %s", stats.summary())
+			Info("stats: %s", stats.summary())
 		}
 	}()
 
@@ -72,7 +90,7 @@ func main() {
 
 	ln, err := net.Listen("tcp", net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)))
 	if err != nil {
-		log.Fatalf("listen error: %v", err)
+		Fatal("listen error: %v", err)
 	}
 	defer ln.Close()
 
@@ -92,7 +110,7 @@ func main() {
 				acceptBackoff = acceptBackoffMin
 				continue
 			}
-			log.Printf("WARN   accept error: %v", err)
+			Warn("accept error: %v", err)
 			time.Sleep(acceptBackoff)
 			acceptBackoff *= 2
 			if acceptBackoff > acceptBackoffMax {
@@ -110,10 +128,14 @@ func main() {
 				handleClient(conn, cfg, secret)
 			}(c)
 		default:
-			log.Printf("WARN   max concurrent sessions reached (%d), dropping %s", cfg.MaxConns, c.RemoteAddr())
+			Warn("max concurrent sessions reached (%d), dropping %s", cfg.MaxConns, c.RemoteAddr())
 			_ = c.Close()
 		}
 	}
+}
+
+func getOSArch() string {
+	return fmt.Sprintf("%s/%s", strings.ToLower(runtime.GOOS), strings.ToLower(runtime.GOARCH))
 }
 
 func handleClient(client net.Conn, cfg *Config, secret []byte) {
@@ -134,7 +156,7 @@ func handleClient(client net.Conn, cfg *Config, secret []byte) {
 		hi, ok := tryHandshake(hs, secret)
 		if !ok {
 			atomic.AddInt64(&stats.connectionsBad, 1)
-			debugf(cfg, "[%s] bad handshake", label)
+			Verbose("[%s] bad handshake", label)
 			return
 		}
 		handleMTProtoClient(handshakeConn, cfg, hi, secret, label)
@@ -144,7 +166,7 @@ func handleClient(client net.Conn, cfg *Config, secret []byte) {
 	_ = handshakeConn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	hs := make([]byte, handshakeLen)
 	if _, err := io.ReadFull(handshakeConn, hs); err != nil {
-		debugf(cfg, "[%s] client disconnected before handshake", label)
+		Verbose("[%s] client disconnected before handshake", label)
 		return
 	}
 	_ = handshakeConn.SetReadDeadline(time.Time{})
@@ -152,7 +174,7 @@ func handleClient(client net.Conn, cfg *Config, secret []byte) {
 	hi, ok := tryHandshake(hs, secret)
 	if !ok {
 		atomic.AddInt64(&stats.connectionsBad, 1)
-		debugf(cfg, "[%s] bad handshake", label)
+		Verbose("[%s] bad handshake", label)
 		return
 	}
 	handleMTProtoClient(handshakeConn, cfg, hi, secret, label)
@@ -169,7 +191,7 @@ func handleMTProtoClient(client net.Conn, cfg *Config, hi *handshakeInfo, secret
 	relayInit := generateRelayInit(hi.ProtoTag, signedDC(hi.DC, hi.IsMedia))
 	cltDec, cltEnc, tgEnc, tgDec, err := buildCiphers(hi.ClientDecI, relayInit, secret)
 	if err != nil {
-		log.Printf("ERROR  [%s] cipher init failed: %v", label, err)
+		Error("[%s] cipher init failed: %v", label, err)
 		return
 	}
 
@@ -186,7 +208,7 @@ func handleMTProtoClient(client net.Conn, cfg *Config, hi *handshakeInfo, secret
 		if setState {
 			if wsFailedRedirect && allRedirect {
 				setBlacklisted(key)
-				warnf("[%s] DC%d%s blacklisted for WS (all redirects)", label, hi.DC, mediaTag)
+				Warn("[%s] DC%d%s blacklisted for WS (all redirects)", label, hi.DC, mediaTag)
 			} else {
 				setCooldown(key)
 			}
@@ -201,7 +223,7 @@ func handleMTProtoClient(client net.Conn, cfg *Config, hi *handshakeInfo, secret
 		tryCF := func() bool {
 			splitter := newFallbackSplitter()
 			if err := cfproxyFallback(label, cfg, hi.DC, hi.IsMedia, client, relayInit, cltDec, cltEnc, tgEnc, tgDec, splitter); err == nil {
-				log.Printf("INFO   [%s] DC%d%s CF proxy fallback closed", label, hi.DC, mediaTag)
+				Info("[%s] DC%d%s CF proxy fallback closed", label, hi.DC, mediaTag)
 				return true
 			}
 			return false
@@ -210,10 +232,10 @@ func handleMTProtoClient(client net.Conn, cfg *Config, hi *handshakeInfo, secret
 			if fallback == "" {
 				return false
 			}
-			log.Printf("INFO   [%s] DC%d%s -> TCP fallback to %s:443", label, hi.DC, mediaTag, fallback)
+			Info("[%s] DC%d%s -> TCP fallback to %s:443", label, hi.DC, mediaTag, fallback)
 			err := tcpFallback(client, fallback, relayInit, cltDec, cltEnc, tgEnc, tgDec)
 			if err == nil {
-				log.Printf("INFO   [%s] DC%d%s TCP fallback closed", label, hi.DC, mediaTag)
+				Info("[%s] DC%d%s TCP fallback closed", label, hi.DC, mediaTag)
 				return true
 			}
 			return false
@@ -231,18 +253,18 @@ func handleMTProtoClient(client net.Conn, cfg *Config, hi *handshakeInfo, secret
 			return
 		}
 
-		log.Printf("WARN   [%s] DC%d%s no fallback available", label, hi.DC, mediaTag)
+		Warn("[%s] DC%d%s no fallback available", label, hi.DC, mediaTag)
 	}
 
 	if isBlacklisted(hi.DC, hi.IsMedia) {
-		log.Printf("INFO   [%s] DC%d%s WS blacklisted -> fallback", label, hi.DC, mediaTag)
+		Info("[%s] DC%d%s WS blacklisted -> fallback", label, hi.DC, mediaTag)
 		doFallback(false, false, false, "")
 		return
 	}
 
 	targets, hasTarget := cfg.DCPool[hi.DC]
 	if !hasTarget || len(targets) == 0 {
-		log.Printf("INFO   [%s] DC%d%s not in config -> fallback", label, hi.DC, mediaTag)
+		Info("[%s] DC%d%s not in config -> fallback", label, hi.DC, mediaTag)
 		doFallback(false, false, false, "")
 		return
 	}
@@ -259,7 +281,7 @@ func handleMTProtoClient(client net.Conn, cfg *Config, hi *handshakeInfo, secret
 		allRedirect := true
 		for _, target := range targets {
 			for _, d := range domains {
-				debugf(cfg, "[%s] DC%d%s -> wss://%s/apiws via %s", label, hi.DC, mediaTag, d, target)
+				Verbose("[%s] DC%d%s -> wss://%s/apiws via %s", label, hi.DC, mediaTag, d, target)
 				conn, resp, err := wsConnect(target, []string{d}, timeout)
 				if err == nil {
 					allRedirect = false
@@ -268,11 +290,11 @@ func handleMTProtoClient(client net.Conn, cfg *Config, hi *handshakeInfo, secret
 				atomic.AddInt64(&stats.wsErrors, 1)
 				if resp != nil && isRedirect(resp.StatusCode) {
 					wsFailedRedirect = true
-					warnf("[%s] DC%d%s got %d from %s via %s", label, hi.DC, mediaTag, resp.StatusCode, d, target)
+					Warn("[%s] DC%d%s got %d from %s via %s", label, hi.DC, mediaTag, resp.StatusCode, d, target)
 					continue
 				}
 				allRedirect = false
-				warnf("[%s] DC%d%s WS connect failed via %s: %v", label, hi.DC, mediaTag, target, err)
+				Warn("[%s] DC%d%s WS connect failed via %s: %v", label, hi.DC, mediaTag, target, err)
 			}
 		}
 		return nil, wsFailedRedirect, allRedirect
@@ -283,7 +305,7 @@ func handleMTProtoClient(client net.Conn, cfg *Config, hi *handshakeInfo, secret
 	if pooled := pool.get(cfg, key, primaryTarget, domains, &stats); pooled != nil {
 		ws = pooled
 		fromPool = true
-		log.Printf("INFO   [%s] DC%d%s -> pool hit via %s", label, hi.DC, mediaTag, primaryTarget)
+		Info("[%s] DC%d%s -> pool hit via %s", label, hi.DC, mediaTag, primaryTarget)
 	}
 
 	if ws == nil {
@@ -307,7 +329,7 @@ func handleMTProtoClient(client net.Conn, cfg *Config, hi *handshakeInfo, secret
 	}
 
 	if err := ws.WriteMessage(websocket.BinaryMessage, relayInit); err != nil {
-		warnf("[%s] ws init write failed: %v", label, err)
+		Warn("[%s] ws init write failed: %v", label, err)
 		_ = ws.Close()
 		if !fromPool {
 			setCooldown(key)
@@ -327,7 +349,7 @@ func handleMTProtoClient(client net.Conn, cfg *Config, hi *handshakeInfo, secret
 			return
 		}
 		if err := ws.WriteMessage(websocket.BinaryMessage, relayInit); err != nil {
-			warnf("[%s] ws init write failed after pool retry: %v", label, err)
+			Warn("[%s] ws init write failed after pool retry: %v", label, err)
 			_ = ws.Close()
 			setCooldown(key)
 			doFallback(false, false, false, primaryTarget)

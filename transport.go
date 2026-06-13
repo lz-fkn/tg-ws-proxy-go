@@ -145,7 +145,7 @@ func bridgeWS(label string, dc int, isMedia bool, client net.Conn, ws *websocket
 	<-done
 	_ = ws.Close()
 	_ = client.Close()
-	logf("INFO   [%s] DC%d%s WS session closed: ^%s (%d pkts) v%s (%d pkts) in %.1fs",
+	Info("[%s] DC%d%s WS session closed: ^%s (%d pkts) v%s (%d pkts) in %.1fs",
 		label,
 		dc,
 		mediaTag,
@@ -160,7 +160,7 @@ func bridgeWS(label string, dc int, isMedia bool, client net.Conn, ws *websocket
 func tcpFallback(client net.Conn, dst string, relayInit []byte, cltDec, cltEnc, tgEnc, tgDec cipher.Stream) error {
 	r, err := net.DialTimeout("tcp", net.JoinHostPort(dst, "443"), 10*time.Second)
 	if err != nil {
-		logf("WARNING  TCP fallback to %s:443 failed: %v", dst, err)
+		Warn("TCP fallback to %s:443 failed: %v", dst, err)
 		return err
 	}
 	defer r.Close()
@@ -284,21 +284,21 @@ func cfproxyFallback(label string, cfg *Config, dc int, isMedia bool, client net
 
 	for _, baseDomain := range cfg.cfproxyDomainsForTry(dc) {
 		domain := fmt.Sprintf("kws%d.%s", dc, baseDomain)
-		logf("INFO   [%s] DC%d%s -> CF proxy wss://%s/apiws", label, dc, mediaTag, domain)
+		Info("[%s] DC%d%s -> CF proxy wss://%s/apiws", label, dc, mediaTag, domain)
 		ws, resp, err := dialWSByDomain(domain, 10*time.Second)
 		if err != nil {
 			atomic.AddInt64(&stats.wsErrors, 1)
 			if resp != nil && isRedirect(resp.StatusCode) {
-				warnf("[%s] DC%d%s CF proxy got %d from %s", label, dc, mediaTag, resp.StatusCode, domain)
+				Warn("[%s] DC%d%s CF proxy got %d from %s", label, dc, mediaTag, resp.StatusCode, domain)
 			} else {
-				warnf("[%s] DC%d%s CF proxy %s failed: %v", label, dc, mediaTag, domain, err)
+				Warn("[%s] DC%d%s CF proxy %s failed: %v", label, dc, mediaTag, domain, err)
 			}
 			continue
 		}
 
 		if err := ws.WriteMessage(websocket.BinaryMessage, relayInit); err != nil {
 			_ = ws.Close()
-			warnf("[%s] DC%d%s CF proxy init write failed: %v", label, dc, mediaTag, err)
+			Warn("[%s] DC%d%s CF proxy init write failed: %v", label, dc, mediaTag, err)
 			continue
 		}
 
