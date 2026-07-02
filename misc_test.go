@@ -25,10 +25,14 @@ func TestGenerateRelayInit(t *testing.T) {
 }
 
 func TestFakeTLSConnectLink(t *testing.T) {
-	got := fakeTLSConnectLink("1.2.3.4", 443, "00112233445566778899aabbccddeeff", "example.com")
-	want := "tg://proxy?server=1.2.3.4&port=443&secret=ee00112233445566778899aabbccddeeff6578616d706c652e636f6d"
-	if got != want {
-		t.Errorf("link = %q\nwant   %q", got, want)
+	gotTg, gotHttps := fakeTLSConnectLink("1.2.3.4", 443, "00112233445566778899aabbccddeeff", "example.com")
+	wantTg := "tg://proxy?server=1.2.3.4&port=443&secret=ee00112233445566778899aabbccddeeff6578616d706c652e636f6d"
+	wantHttps := "https://t.me/proxy?server=1.2.3.4&port=443&secret=ee00112233445566778899aabbccddeeff6578616d706c652e636f6d"
+	if gotTg != wantTg {
+		t.Errorf("tg link = %q\nwant   %q", gotTg, wantTg)
+	}
+	if gotHttps != wantHttps {
+		t.Errorf("https link = %q\nwant   %q", gotHttps, wantHttps)
 	}
 }
 

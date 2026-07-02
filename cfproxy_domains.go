@@ -59,7 +59,7 @@ func normalizeCFProxyDomain(raw string) string {
 	if err != nil {
 		return strings.ToLower(cleaned)
 	}
-	return domain
+	return strings.ToLower(domain)
 }
 
 func appendUniqueDomains(dst []string, domains ...string) []string {
