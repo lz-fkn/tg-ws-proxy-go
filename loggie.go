@@ -17,6 +17,7 @@ const (
 )
 
 var LogLevel = 3 // 0=FATAL, 1=ERROR, 2=WARN, 3=INFO, 4=VERBOSE
+var UseTimestamps = false
 
 const easter string = "Man, this system is so\n\033[31m" +
 	"   ▄████████    ▄████████    ▄████████\n" +
@@ -27,13 +28,18 @@ const easter string = "Man, this system is so\n\033[31m" +
 	"  ███    ███          ███          ███\n" +
 	"  ███    ███    ▄█    ███    ▄█    ███\n" +
 	"  ███    █▀   ▄████████▀   ▄████████▀ \n" +
-	"\033[0mthat the tg-ws-proxy-go terminated."
+	"\033[0mtg-ws-proxy-go terminated."
 
 var std = log.New(os.Stderr, "", 0)
 
 func logf(level, color string, format string, v ...interface{}) {
-	timestamp := time.Now().Format("02 Jan 2006 15:04:05.000")
-	msg := colorGray + "[" + timestamp + "]" + color + " [" + level + "] " + format + colorReset
+	var msg string
+	if UseTimestamps {
+		timestamp := time.Now().Format("02 Jan 2006 15:04:05.000")
+		msg = colorGray + "[" + timestamp + "]" + color + " [" + level + "] " + format + colorReset
+	} else {
+		msg = color + "[" + level + "] " + format + colorReset
+	}
 	std.Printf(msg, v...)
 }
 

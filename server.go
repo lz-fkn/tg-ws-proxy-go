@@ -77,7 +77,7 @@ func main() {
 		Info("  CF proxy:      active=%s pool=%d (%s, refresh=%s)", cfg.cfproxyActiveDomain(), cfg.cfproxyDomainPoolSize(), prio, refreshMode)
 	}
 	if cfg.hasCFProxyWorkerDomains() {
-		log.Printf("INFO     CF worker:     %s (tried first)", strings.Join(cfg.FallbackCFProxyWorkerDomains, ", "))
+		Info("  CF worker:     %s (tried first)", strings.Join(cfg.FallbackCFProxyWorkerDomains, ", "))
 	}
 	Info("%s", strings.Repeat("=", 75))
 	Info("  Connect URL:")
@@ -142,7 +142,7 @@ func main() {
 				defer func() {
 					if r := recover(); r != nil {
 						_ = conn.Close()
-						log.Printf("ERROR  [%s] panic recovered: %v", conn.RemoteAddr(), r)
+						Error("[%s] panic recovered: %v", conn.RemoteAddr(), r)
 					}
 				}()
 				handleClient(conn, cfg, secret)
@@ -242,7 +242,7 @@ func handleMTProtoClient(client net.Conn, cfg *Config, hi *handshakeInfo, secret
 		tryWorker := func() bool {
 			splitter := newFallbackSplitter()
 			if err := cfWorkerFallback(label, cfg, hi.DC, hi.IsMedia, fallback, client, relayInit, cltDec, cltEnc, tgEnc, tgDec, splitter); err == nil {
-				log.Printf("INFO   [%s] DC%d%s CF worker fallback closed", label, hi.DC, mediaTag)
+				Info("[%s] DC%d%s CF worker fallback closed", label, hi.DC, mediaTag)
 				return true
 			}
 			return false
@@ -312,7 +312,7 @@ func handleMTProtoClient(client net.Conn, cfg *Config, hi *handshakeInfo, secret
 			}
 		}
 		if len(directTargets) == 0 {
-			log.Printf("INFO   [%s] DC%d%s WS target IPs are timed out -> fallback", label, hi.DC, mediaTag)
+			Info("[%s] DC%d%s WS target IPs are timed out -> fallback", label, hi.DC, mediaTag)
 			doFallback(false, false, false, primaryTarget)
 			return
 		}
@@ -347,7 +347,7 @@ func handleMTProtoClient(client net.Conn, cfg *Config, hi *handshakeInfo, secret
 				if isTimeoutError(err) {
 					timedOut = true
 					timedOutTarget = target
-					warnf("[%s] DC%d%s WS connect timed out via %s", label, hi.DC, mediaTag, target)
+					Warn("[%s] DC%d%s WS connect timed out via %s", label, hi.DC, mediaTag, target)
 					break
 				}
 				allRedirect = false

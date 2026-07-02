@@ -19,7 +19,7 @@ go build -ldflags="-s -w"
 вместо всяких конфиг файлов и прочего говна теперь просто аргументы (они и так были, но...)
 
 ```
-Usage of ../tg-ws-proxy-go:
+Usage of tg-ws-proxy:
   -buf-kb int
         Socket buffer size in KB (default 256)
   -cfproxy-domain string
@@ -30,6 +30,8 @@ Usage of ../tg-ws-proxy-go:
         URL to fetch CF proxy domain list from (default "https://raw.githubusercontent.com/Flowseal/tg-ws-proxy/main/.github/cfproxy-domains.txt")
   -cfproxy-priority
         Try cfproxy before TCP fallback (default true)
+  -cfproxy-worker-domain string
+        Comma-separated Cloudflare Worker domain(s) for WS fallback (e.g. name-1234.user.workers.dev); tried first when set
   -credits
         Show credits and exit
   -dc-ip value
@@ -41,7 +43,7 @@ Usage of ../tg-ws-proxy-go:
   -dc-ip-pool value
         Target pool as DC:IP1,IP2,...; repeatable
   -fake-tls-domain string
-        Enable Fake TLS (ee-secret) with masking domain
+        Enable Fake TLS (ee-secret) with masking domain (https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/FakeTlsNginx.md)
   -gen-secret
         Generate random secret and print it
   -host string
@@ -58,6 +60,10 @@ Usage of ../tg-ws-proxy-go:
         WS pool size per DC (default 4)
   -port int
         Listen port (default 1443)
+  -print-link
+        Print the tg:// connect link and exit
   -secret string
         MTProto secret (32 hex chars)
+  -timestamps
+        Show timestamps in logs
 ```

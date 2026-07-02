@@ -26,6 +26,7 @@ type Config struct {
 	FallbackCFProxyActive        string
 	FallbackCFProxyPerDCActive   map[int]string
 	LogLevel                     int
+	UseTimestamps                bool
 	BufKB                        int
 	PoolSize                     int
 	MaxConns                     int

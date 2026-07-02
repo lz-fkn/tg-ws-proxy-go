@@ -335,17 +335,17 @@ func cfWorkerFallback(label string, cfg *Config, dc int, isMedia bool, dst strin
 	}
 
 	for _, worker := range cfg.cfproxyWorkerDomainsForTry() {
-		logf("INFO   [%s] DC%d%s -> CF worker wss://%s/apiws?dst=%s", label, dc, mediaTag, worker, dst)
+		Info("[%s] DC%d%s -> CF worker wss://%s/apiws?dst=%s", label, dc, mediaTag, worker, dst)
 		ws, _, err := dialWSWorker(worker, dst, dc, wsConnectTimeout)
 		if err != nil {
 			atomic.AddInt64(&stats.wsErrors, 1)
-			warnf("[%s] DC%d%s CF worker %s failed: %v", label, dc, mediaTag, worker, err)
+			Warn("[%s] DC%d%s CF worker %s failed: %v", label, dc, mediaTag, worker, err)
 			continue
 		}
 
 		if err := ws.WriteMessage(websocket.BinaryMessage, relayInit); err != nil {
 			_ = ws.Close()
-			warnf("[%s] DC%d%s CF worker init write failed: %v", label, dc, mediaTag, err)
+			Warn("[%s] DC%d%s CF worker init write failed: %v", label, dc, mediaTag, err)
 			continue
 		}
 

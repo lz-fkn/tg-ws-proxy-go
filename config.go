@@ -6,15 +6,15 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 )
 
-func parseFlags() (*Config, error) {
-	fs := flag.NewFlagSet("tg-ws-proxy", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+func parseFlags(args []string) (*Config, error) {
+	fs := flag.NewFlagSet("tg-ws-proxy-go", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
 
 	host := fs.String("host", "127.0.0.1", "Listen host")
 	port := fs.Int("port", 1443, "Listen port")
@@ -22,6 +22,7 @@ func parseFlags() (*Config, error) {
 	genSecret := fs.Bool("gen-secret", false, "Generate random secret and print it")
 	printLink := fs.Bool("print-link", false, "Print the tg:// connect link and exit")
 	logLevel := fs.Int("loglevel", 3, "Log Level (0=FATAL, 1=ERROR, 2=WARN, 3=INFO, 4=VERBOSE)")
+	useTimestamps := fs.Bool("timestamps", false, "Show timestamps in logs")
 	bufKB := fs.Int("buf-kb", 256, "Socket buffer size in KB")
 	poolSize := fs.Int("pool-size", 4, "WS pool size per DC")
 	fakeTLSDomain := fs.String("fake-tls-domain", "", "Enable Fake TLS (ee-secret) with masking domain (https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/FakeTlsNginx.md)")
@@ -49,6 +50,7 @@ func parseFlags() (*Config, error) {
 	fs.Visit(func(f *flag.Flag) { provided[f.Name] = true })
 
 	LogLevel = *logLevel
+	UseTimestamps = *useTimestamps
 
 	if *printLink && *secret == "" {
 		return nil, errors.New("--print-link requires --secret")
