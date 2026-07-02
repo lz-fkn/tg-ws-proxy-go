@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -172,7 +173,7 @@ func bridgeWS(label string, dc int, isMedia bool, client net.Conn, ws *websocket
 }
 
 func tcpFallback(client net.Conn, dst string, relayInit []byte, cltDec, cltEnc, tgEnc, tgDec cipher.Stream) error {
-	r, err := net.DialTimeout("tcp", net.JoinHostPort(dst, "443"), 10*time.Second)
+	r, err := net.DialTimeout("tcp", net.JoinHostPort(dst, "443"), tcpDialTimeout)
 	if err != nil {
 		Warn("TCP fallback to %s:443 failed: %v", dst, err)
 		return err
@@ -289,6 +290,56 @@ func dialWSByDomain(domain string, timeout time.Duration) (*websocket.Conn, *htt
 	headers.Set("Origin", "https://web.telegram.org")
 	return dialer.Dial(u.String(), headers)
 }
+func dialWSWorker(worker, dst string, dc int, timeout time.Duration) (*websocket.Conn, *http.Response, error) {
+	q := url.Values{}
+	q.Set("dst", dst)
+	q.Set("dc", strconv.Itoa(dc))
+	u := url.URL{Scheme: "wss", Host: worker, Path: "/apiws", RawQuery: q.Encode()}
+	dialer := websocket.Dialer{
+		HandshakeTimeout: timeout,
+		Subprotocols:     []string{"binary"},
+		TLSClientConfig: &tls.Config{
+			ServerName:         worker,
+			InsecureSkipVerify: true,
+		},
+	}
+	headers := http.Header{}
+	headers.Set("Host", worker)
+	headers.Set("Origin", "https://web.telegram.org")
+	return dialer.Dial(u.String(), headers)
+}
+
+func cfWorkerFallback(label string, cfg *Config, dc int, isMedia bool, dst string, client net.Conn, relayInit []byte, cltDec, cltEnc, tgEnc, tgDec cipher.Stream, splitter *msgSplitter) error {
+	mediaTag := ""
+	if isMedia {
+		mediaTag = " media"
+	}
+	if dst == "" {
+		return errNoDomains
+	}
+
+	for _, worker := range cfg.cfproxyWorkerDomainsForTry() {
+		logf("INFO   [%s] DC%d%s -> CF worker wss://%s/apiws?dst=%s", label, dc, mediaTag, worker, dst)
+		ws, _, err := dialWSWorker(worker, dst, dc, wsConnectTimeout)
+		if err != nil {
+			atomic.AddInt64(&stats.wsErrors, 1)
+			warnf("[%s] DC%d%s CF worker %s failed: %v", label, dc, mediaTag, worker, err)
+			continue
+		}
+
+		if err := ws.WriteMessage(websocket.BinaryMessage, relayInit); err != nil {
+			_ = ws.Close()
+			warnf("[%s] DC%d%s CF worker init write failed: %v", label, dc, mediaTag, err)
+			continue
+		}
+
+		atomic.AddInt64(&stats.connectionsCF, 1)
+		bridgeWS(label, dc, isMedia, client, ws, cltDec, cltEnc, tgEnc, tgDec, splitter)
+		return nil
+	}
+
+	return errNoDomains
+}
 
 func cfproxyFallback(label string, cfg *Config, dc int, isMedia bool, client net.Conn, relayInit []byte, cltDec, cltEnc, tgEnc, tgDec cipher.Stream, splitter *msgSplitter) error {
 	mediaTag := ""
@@ -299,7 +350,7 @@ func cfproxyFallback(label string, cfg *Config, dc int, isMedia bool, client net
 	for _, baseDomain := range cfg.cfproxyDomainsForTry(dc) {
 		domain := fmt.Sprintf("kws%d.%s", dc, baseDomain)
 		Info("[%s] DC%d%s -> CF proxy wss://%s/apiws", label, dc, mediaTag, domain)
-		ws, resp, err := dialWSByDomain(domain, 10*time.Second)
+		ws, resp, err := dialWSByDomain(domain, wsConnectTimeout)
 		if err != nil {
 			atomic.AddInt64(&stats.wsErrors, 1)
 			if resp != nil && isRedirect(resp.StatusCode) {

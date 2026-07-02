@@ -75,7 +75,7 @@ func fakeTLSConnectLink(host string, port int, secretHex, domain string) (string
 }
 
 func acceptFakeTLSClient(client net.Conn, secret []byte, maskingDomain string, label string) (net.Conn, []byte, bool) {
-	_ = client.SetReadDeadline(time.Now().Add(10 * time.Second))
+	_ = client.SetReadDeadline(time.Now().Add(clientHandshakeTimeout))
 	first := make([]byte, 1)
 	if _, err := io.ReadFull(client, first); err != nil {
 		return nil, nil, false
@@ -114,7 +114,7 @@ func acceptFakeTLSClient(client net.Conn, secret []byte, maskingDomain string, l
 		Warn("[%s] Fake TLS server hello build failed: %v", label, err)
 		return nil, nil, false
 	}
-	_ = client.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	_ = client.SetWriteDeadline(time.Now().Add(clientHandshakeTimeout))
 	if _, err := client.Write(serverHello); err != nil {
 		return nil, nil, false
 	}
@@ -122,7 +122,7 @@ func acceptFakeTLSClient(client net.Conn, secret []byte, maskingDomain string, l
 
 	wrapped := &fakeTLSConn{raw: client}
 	hs := make([]byte, handshakeLen)
-	_ = wrapped.SetReadDeadline(time.Now().Add(10 * time.Second))
+	_ = wrapped.SetReadDeadline(time.Now().Add(clientHandshakeTimeout))
 	if _, err := io.ReadFull(wrapped, hs); err != nil {
 		return nil, nil, false
 	}
@@ -215,14 +215,14 @@ func writeFakeTLSRedirect(client net.Conn, domain string) error {
 		"HTTP/1.1 301 Moved Permanently\r\nLocation: https://%s/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
 		domain,
 	)
-	_ = client.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	_ = client.SetWriteDeadline(time.Now().Add(fakeTLSWriteTimeout))
 	_, err := client.Write([]byte(resp))
 	_ = client.SetWriteDeadline(time.Time{})
 	return err
 }
 
 func proxyToMaskingDomain(client net.Conn, initial []byte, domain string, label string) {
-	upstream, err := net.DialTimeout("tcp", net.JoinHostPort(domain, "443"), 10*time.Second)
+	upstream, err := net.DialTimeout("tcp", net.JoinHostPort(domain, "443"), tcpDialTimeout)
 	if err != nil {
 		Info("[%s] masking connect failed: %v", label, err)
 		return
@@ -231,7 +231,7 @@ func proxyToMaskingDomain(client net.Conn, initial []byte, domain string, label 
 
 	Info("[%s] masking -> %s:443", label, domain)
 	if len(initial) > 0 {
-		_ = upstream.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		_ = upstream.SetWriteDeadline(time.Now().Add(fakeTLSWriteTimeout))
 		if _, err := upstream.Write(initial); err != nil {
 			return
 		}
@@ -253,7 +253,7 @@ func proxyToMaskingDomain(client net.Conn, initial []byte, domain string, label 
 	_ = upstream.Close()
 	select {
 	case <-done:
-	case <-time.After(1 * time.Second):
+	case <-time.After(fakeTLSDrainGrace):
 	}
 }
 

@@ -7,29 +7,30 @@ import (
 )
 
 type Config struct {
-	Host                       string
-	Port                       int
-	SecretHex                  string
-	GenSecret                  bool
-	PrintLink                  bool
-	FakeTLSDomain              string
-	DCMap                      map[int]string
-	DCPool                     map[int][]string
-	FallbackCFProxy            bool
-	FallbackCFProxyPriority    bool
-	FallbackCFProxyDomain      string
-	FallbackCFProxyUserDomain  bool
-	FallbackCFProxyRefresh     bool
-	FallbackCFProxyDomainsURL  string
-	FallbackCFProxyDomains     []string
-	FallbackCFProxyActive      string
-	FallbackCFProxyPerDCActive map[int]string
-	LogLevel                   int
-	BufKB                      int
-	PoolSize                   int
-	MaxConns                   int
-	cfproxyMu                  sync.RWMutex
-	Credits                    bool
+	Host                         string
+	Port                         int
+	SecretHex                    string
+	GenSecret                    bool
+	PrintLink                    bool
+	FakeTLSDomain                string
+	DCMap                        map[int]string
+	DCPool                       map[int][]string
+	FallbackCFProxy              bool
+	FallbackCFProxyPriority      bool
+	FallbackCFProxyDomain        string
+	FallbackCFProxyUserDomain    bool
+	FallbackCFProxyRefresh       bool
+	FallbackCFProxyDomainsURL    string
+	FallbackCFProxyDomains       []string
+	FallbackCFProxyWorkerDomains []string
+	FallbackCFProxyActive        string
+	FallbackCFProxyPerDCActive   map[int]string
+	LogLevel                     int
+	BufKB                        int
+	PoolSize                     int
+	MaxConns                     int
+	cfproxyMu                    sync.RWMutex
+	Credits                      bool
 }
 
 type Stats struct {

@@ -1,8 +1,6 @@
 package main
 
 import (
-	"errors"
-	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,7 +26,7 @@ func newWSPool() *wsPool {
 	}
 }
 
-func (p *wsPool) get(cfg *Config, key dcKey, targetIP string, domains []string, st *Stats) *websocket.Conn {
+func (p *wsPool) get(cfg *Config, key dcKey, targetIP string, domains []string) *websocket.Conn {
 	now := time.Now()
 	for {
 		p.mu.Lock()
@@ -36,7 +34,7 @@ func (p *wsPool) get(cfg *Config, key dcKey, targetIP string, domains []string, 
 		if len(bucket) == 0 {
 			p.scheduleRefill(cfg, key, targetIP, domains)
 			p.mu.Unlock()
-			atomic.AddInt64(&st.poolMisses, 1)
+			atomic.AddInt64(&stats.poolMisses, 1)
 			return nil
 		}
 		item := bucket[0]
@@ -44,20 +42,13 @@ func (p *wsPool) get(cfg *Config, key dcKey, targetIP string, domains []string, 
 		p.scheduleRefill(cfg, key, targetIP, domains)
 		p.mu.Unlock()
 
-		if now.Sub(item.Created) > wsPoolMaxAge || !wsAlive(item.Conn) {
+		if now.Sub(item.Created) > wsPoolMaxAge {
 			_ = item.Conn.Close()
 			continue
 		}
-		atomic.AddInt64(&st.poolHits, 1)
+		atomic.AddInt64(&stats.poolHits, 1)
 		return item.Conn
 	}
-}
-
-func wsAlive(conn *websocket.Conn) bool {
-	_ = conn.SetReadDeadline(time.Now())
-	_, _, err := conn.ReadMessage()
-	_ = conn.SetReadDeadline(time.Time{})
-	return err == nil || errors.Is(err, os.ErrDeadlineExceeded)
 }
 
 func (p *wsPool) scheduleRefill(cfg *Config, key dcKey, targetIP string, domains []string) {
@@ -82,7 +73,7 @@ func (p *wsPool) refill(cfg *Config, key dcKey, targetIP string, domains []strin
 		if cur >= cfg.PoolSize {
 			return
 		}
-		conn, _, err := wsConnect(targetIP, domains, 8*time.Second)
+		conn, _, err := wsConnect(targetIP, domains, poolConnectTimeout)
 		if err != nil {
 			return
 		}

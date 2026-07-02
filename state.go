@@ -9,7 +9,7 @@ import (
 var (
 	stats     Stats
 	pool      = newWSPool()
-	blacklist = make(map[dcKey]struct{})
+	blacklist = make(map[dcKey]time.Time)
 	blMu      sync.Mutex
 	failUntil = make(map[dcKey]time.Time)
 	fuMu      sync.Mutex
@@ -36,13 +36,18 @@ func clearCooldown(k dcKey) {
 
 func setBlacklisted(k dcKey) {
 	blMu.Lock()
-	blacklist[k] = struct{}{}
+	blacklist[k] = time.Now().Add(dcBlacklistTTL)
 	blMu.Unlock()
 }
 
 func isBlacklisted(dc int, media bool) bool {
+	k := dcKey{DC: dc, IsMedia: media}
 	blMu.Lock()
-	_, ok := blacklist[dcKey{DC: dc, IsMedia: media}]
+	t, ok := blacklist[k]
+	if ok && !time.Now().Before(t) {
+		delete(blacklist, k)
+		ok = false
+	}
 	blMu.Unlock()
 	return ok
 }

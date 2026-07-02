@@ -17,8 +17,17 @@ const (
 
 	wsPoolMaxAge                         = 120 * time.Second
 	dcFailCooldown                       = 30 * time.Second
+	dcBlacklistTTL                       = 10 * time.Minute
 	ioIdleTimeout                        = 90 * time.Second
 	wsWriteTimeout                       = 15 * time.Second
+	wsConnectTimeout                     = 10 * time.Second
+	wsConnectCooldownTimeout             = 2 * time.Second
+	poolConnectTimeout                   = 8 * time.Second
+	clientHandshakeTimeout               = 10 * time.Second
+	tcpDialTimeout                       = 10 * time.Second
+	fakeTLSWriteTimeout                  = 5 * time.Second
+	fakeTLSDrainGrace                    = 1 * time.Second
+	statsLogInterval                     = 60 * time.Second
 	statsFlushBytes                      = 256 * 1024
 	acceptPollTimeout                    = 1 * time.Second
 	acceptBackoffMin                     = 5 * time.Millisecond

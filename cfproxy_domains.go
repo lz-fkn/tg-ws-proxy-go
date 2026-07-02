@@ -280,6 +280,19 @@ func (cfg *Config) hasCFProxyDomains() bool {
 	return len(cfg.FallbackCFProxyDomains) > 0
 }
 
+func (cfg *Config) hasCFProxyWorkerDomains() bool {
+	cfg.cfproxyMu.RLock()
+	defer cfg.cfproxyMu.RUnlock()
+	return len(cfg.FallbackCFProxyWorkerDomains) > 0
+}
+
+func (cfg *Config) cfproxyWorkerDomainsForTry() []string {
+	cfg.cfproxyMu.RLock()
+	domains := append([]string(nil), cfg.FallbackCFProxyWorkerDomains...)
+	cfg.cfproxyMu.RUnlock()
+	return shuffledDomains(domains)
+}
+
 func (cfg *Config) cfproxyDomainsForTry(dc int) []string {
 	cfg.cfproxyMu.RLock()
 	defer cfg.cfproxyMu.RUnlock()
