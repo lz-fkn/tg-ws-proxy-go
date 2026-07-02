@@ -23,6 +23,16 @@ func main() {
 		fmt.Println(cfg.SecretHex)
 		return
 	}
+	if cfg.PrintLink {
+		linkHost := getLinkHost(cfg.Host)
+		if cfg.FakeTLSDomain != "" {
+			fmt.Println(fakeTLSConnectLink(linkHost, cfg.Port, cfg.SecretHex, cfg.FakeTLSDomain))
+		} else {
+			fmt.Printf("tg://proxy?server=%s&port=%d&secret=dd%s\n", linkHost, cfg.Port, cfg.SecretHex)
+		}
+		return
+	}
+	
 	if cfg.Credits {
 		Info("%s", strings.Repeat("=", 75))
 		PrintLogo()
