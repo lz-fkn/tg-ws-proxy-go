@@ -16,11 +16,13 @@ const (
 	protoPaddedIntermediateInt = 0xDDDDDDDD
 
 	wsPoolMaxAge                         = 120 * time.Second
-	dcFailCooldown                       = 30 * time.Second
+	ipFailCooldown                       = time.Hour
+	dcFailCooldown                       = 60 * time.Second
+	frontingCooldown                     = 30 * time.Minute
 	dcBlacklistTTL                       = 10 * time.Minute
 	ioIdleTimeout                        = 90 * time.Second
 	wsWriteTimeout                       = 15 * time.Second
-	wsConnectTimeout                     = 10 * time.Second
+	wsConnectTimeout                     = 5 * time.Second
 	wsConnectCooldownTimeout             = 2 * time.Second
 	poolConnectTimeout                   = 8 * time.Second
 	clientHandshakeTimeout               = 10 * time.Second

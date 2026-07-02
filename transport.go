@@ -24,12 +24,20 @@ var ioBufPool = sync.Pool{
 }
 
 func dialWS(targetIP, domain string, timeout time.Duration) (*websocket.Conn, *http.Response, error) {
+	return dialWSWithSNI(targetIP, domain, domain, timeout)
+}
+
+func dialWSFronting(targetIP, domain string, timeout time.Duration) (*websocket.Conn, *http.Response, error) {
+	return dialWSWithSNI(targetIP, domain, "sprinthost.ru", timeout)
+}
+
+func dialWSWithSNI(targetIP, domain, sni string, timeout time.Duration) (*websocket.Conn, *http.Response, error) {
 	u := url.URL{Scheme: "wss", Host: domain, Path: "/apiws"}
 	dialer := websocket.Dialer{
 		HandshakeTimeout: timeout,
 		Subprotocols:     []string{"binary"},
 		TLSClientConfig: &tls.Config{
-			ServerName:         domain,
+			ServerName:         sni,
 			InsecureSkipVerify: true,
 		},
 		NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -259,10 +267,18 @@ func tcpFallback(client net.Conn, dst string, relayInit []byte, cltDec, cltEnc, 
 }
 
 func wsConnect(targetIP string, domains []string, timeout time.Duration) (*websocket.Conn, *http.Response, error) {
+	return wsConnectWithDialer(targetIP, domains, timeout, dialWS)
+}
+
+func wsConnectFronting(targetIP string, domains []string, timeout time.Duration) (*websocket.Conn, *http.Response, error) {
+	return wsConnectWithDialer(targetIP, domains, timeout, dialWSFronting)
+}
+
+func wsConnectWithDialer(targetIP string, domains []string, timeout time.Duration, dial func(string, string, time.Duration) (*websocket.Conn, *http.Response, error)) (*websocket.Conn, *http.Response, error) {
 	var lastErr error
 	var lastResp *http.Response
 	for _, domain := range domains {
-		conn, resp, err := dialWS(targetIP, domain, timeout)
+		conn, resp, err := dial(targetIP, domain, timeout)
 		if err == nil {
 			return conn, resp, nil
 		}

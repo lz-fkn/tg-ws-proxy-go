@@ -39,6 +39,7 @@ type Stats struct {
 	connectionsWS     int64
 	connectionsTCP    int64
 	connectionsCF     int64
+	connectionsFront  int64
 	connectionsBad    int64
 	wsErrors          int64
 	bytesUp           int64
@@ -56,12 +57,13 @@ func (s *Stats) summary() string {
 		poolS = fmt.Sprintf("%d/%d", hits, poolTotal)
 	}
 	return fmt.Sprintf(
-		"total=%d active=%d ws=%d tcp_fb=%d cf=%d bad=%d err=%d pool=%s up=%s down=%s",
+		"total=%d active=%d ws=%d tcp_fb=%d cf=%d front=%d bad=%d err=%d pool=%s up=%s down=%s",
 		atomic.LoadInt64(&s.connectionsTotal),
 		atomic.LoadInt64(&s.connectionsActive),
 		atomic.LoadInt64(&s.connectionsWS),
 		atomic.LoadInt64(&s.connectionsTCP),
 		atomic.LoadInt64(&s.connectionsCF),
+		atomic.LoadInt64(&s.connectionsFront),
 		atomic.LoadInt64(&s.connectionsBad),
 		atomic.LoadInt64(&s.wsErrors),
 		poolS,

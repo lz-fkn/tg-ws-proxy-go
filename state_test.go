@@ -47,3 +47,64 @@ func TestBlacklistTTL(t *testing.T) {
 		t.Fatal("expired blacklist entry should be deleted")
 	}
 }
+
+func TestIPCooldown(t *testing.T) {
+	ip := "149.154.167.51"
+	clearIPCooldown(ip)
+	if inIPCooldown(ip) {
+		t.Fatal("not in IP cooldown after clear")
+	}
+	setIPCooldown(ip)
+	if !inIPCooldown(ip) {
+		t.Fatal("expected in IP cooldown after set")
+	}
+	clearIPCooldown(ip)
+	if inIPCooldown(ip) {
+		t.Fatal("expected not in IP cooldown after clear")
+	}
+}
+
+func TestIPCooldownTTL(t *testing.T) {
+	ip := "149.154.175.50"
+	setIPCooldown(ip)
+	if !inIPCooldown(ip) {
+		t.Fatal("expected in IP cooldown right after set")
+	}
+
+	ipFuMu.Lock()
+	ipFailUntil[ip] = time.Now().Add(-time.Minute)
+	ipFuMu.Unlock()
+
+	if inIPCooldown(ip) {
+		t.Fatal("expected expired IP cooldown entry to report false")
+	}
+	ipFuMu.Lock()
+	_, ok := ipFailUntil[ip]
+	ipFuMu.Unlock()
+	if ok {
+		t.Fatal("expired IP cooldown entry should be deleted")
+	}
+}
+
+func TestEmptyIPCooldownNoop(t *testing.T) {
+	setIPCooldown("")
+	if inIPCooldown("") {
+		t.Fatal("empty IP must never be in cooldown")
+	}
+	clearIPCooldown("")
+}
+
+func TestFrontingActive(t *testing.T) {
+	clearFrontingActive()
+	if frontingActive() {
+		t.Fatal("fronting should be inactive after clear")
+	}
+	setFrontingActive()
+	if !frontingActive() {
+		t.Fatal("fronting should be active after set")
+	}
+	clearFrontingActive()
+	if frontingActive() {
+		t.Fatal("fronting should be inactive after second clear")
+	}
+}

@@ -1,6 +1,17 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"os"
+	"testing"
+)
+
+type testTimeoutError struct{}
+
+func (testTimeoutError) Error() string   { return "timeout" }
+func (testTimeoutError) Timeout() bool   { return true }
+func (testTimeoutError) Temporary() bool { return false }
 
 func TestHumanBytes(t *testing.T) {
 	cases := []struct {
@@ -31,5 +42,23 @@ func TestIsRedirect(t *testing.T) {
 		if isRedirect(code) {
 			t.Errorf("isRedirect(%d) = true, want false", code)
 		}
+	}
+}
+
+func TestIsTimeoutError(t *testing.T) {
+	if !isTimeoutError(context.DeadlineExceeded) {
+		t.Fatal("context deadline should be timeout")
+	}
+	if !isTimeoutError(os.ErrDeadlineExceeded) {
+		t.Fatal("os deadline should be timeout")
+	}
+	if !isTimeoutError(testTimeoutError{}) {
+		t.Fatal("net.Error timeout should be timeout")
+	}
+	if isTimeoutError(errors.New("plain error")) {
+		t.Fatal("plain error should not be timeout")
+	}
+	if isTimeoutError(nil) {
+		t.Fatal("nil should not be timeout")
 	}
 }

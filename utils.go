@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"math"
 	"net"
+	"os"
 	"time"
 )
 
@@ -47,6 +50,16 @@ func getLinkHost(host string) string {
 
 func isRedirect(code int) bool {
 	return code == 301 || code == 302 || code == 303 || code == 307 || code == 308
+}
+
+func isTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout() ||
+		errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, os.ErrDeadlineExceeded)
 }
 
 func setSockOpts(c net.Conn, bufSize int) error {

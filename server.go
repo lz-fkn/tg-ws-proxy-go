@@ -302,6 +302,22 @@ func handleMTProtoClient(client net.Conn, cfg *Config, hi *handshakeInfo, secret
 		return
 	}
 	primaryTarget := targets[0]
+	directTargets := targets
+	hasAnyCFFallback := cfg.hasCFProxyWorkerDomains() || (cfg.FallbackCFProxy && cfg.hasCFProxyDomains())
+	if hasAnyCFFallback {
+		directTargets = make([]string, 0, len(targets))
+		for _, target := range targets {
+			if !inIPCooldown(target) {
+				directTargets = append(directTargets, target)
+			}
+		}
+		if len(directTargets) == 0 {
+			log.Printf("INFO   [%s] DC%d%s WS target IPs are timed out -> fallback", label, hi.DC, mediaTag)
+			doFallback(false, false, false, primaryTarget)
+			return
+		}
+	}
+	wsTarget := directTargets[0]
 
 	dcW := hi.DC
 	if v, ok := dcOverrides[dcW]; ok {
@@ -309,16 +325,18 @@ func handleMTProtoClient(client net.Conn, cfg *Config, hi *handshakeInfo, secret
 	}
 	domains := wsDomains(dcW, hi.IsMedia)
 	key := dcKey{DC: hi.DC, IsMedia: hi.IsMedia}
-	connectWS := func(timeout time.Duration) (*websocket.Conn, bool, bool) {
+	connectWS := func(timeout time.Duration) (*websocket.Conn, bool, bool, bool, string) {
 		wsFailedRedirect := false
 		allRedirect := true
-		for _, target := range targets {
+		timedOut := false
+		timedOutTarget := ""
+		for _, target := range directTargets {
 			for _, d := range domains {
 				Verbose("[%s] DC%d%s -> wss://%s/apiws via %s", label, hi.DC, mediaTag, d, target)
 				conn, resp, err := dialWS(target, d, timeout)
 				if err == nil {
 					allRedirect = false
-					return conn, wsFailedRedirect, allRedirect
+					return conn, wsFailedRedirect, allRedirect, timedOut, timedOutTarget
 				}
 				atomic.AddInt64(&stats.wsErrors, 1)
 				if resp != nil && isRedirect(resp.StatusCode) {
@@ -326,29 +344,63 @@ func handleMTProtoClient(client net.Conn, cfg *Config, hi *handshakeInfo, secret
 					Warn("[%s] DC%d%s got %d from %s via %s", label, hi.DC, mediaTag, resp.StatusCode, d, target)
 					continue
 				}
+				if isTimeoutError(err) {
+					timedOut = true
+					timedOutTarget = target
+					warnf("[%s] DC%d%s WS connect timed out via %s", label, hi.DC, mediaTag, target)
+					break
+				}
 				allRedirect = false
 				Warn("[%s] DC%d%s WS connect failed via %s: %v", label, hi.DC, mediaTag, target, err)
 			}
 		}
-		return nil, wsFailedRedirect, allRedirect
+		return nil, wsFailedRedirect, allRedirect, timedOut, timedOutTarget
+	}
+
+	connectFronting := func(reason string) *websocket.Conn {
+		for _, target := range directTargets {
+			Info("[%s] DC%d%s -> fronting %s via %s", label, hi.DC, mediaTag, reason, target)
+			conn, _, err := wsConnectFronting(target, domains, wsConnectTimeout)
+			if err == nil {
+				setFrontingActive()
+				atomic.AddInt64(&stats.connectionsFront, 1)
+				Info("[%s] DC%d%s fronting OK for %ds", label, hi.DC, mediaTag, int(frontingCooldown.Seconds()))
+				return conn
+			}
+			atomic.AddInt64(&stats.wsErrors, 1)
+			Warn("[%s] DC%d%s fronting failed via %s: %v", label, hi.DC, mediaTag, target, err)
+		}
+		return nil
 	}
 
 	dialFresh := func() *websocket.Conn {
+		if frontingActive() {
+			if conn := connectFronting("active"); conn != nil {
+				return conn
+			}
+			clearFrontingActive()
+		}
 		timeout := wsConnectTimeout
 		if inCooldown(key) {
 			timeout = wsConnectCooldownTimeout
 		}
-		conn, wsFailedRedirect, allRedirect := connectWS(timeout)
+		conn, wsFailedRedirect, allRedirect, timedOut, timedOutTarget := connectWS(timeout)
 		if conn == nil {
+			if timedOut && timedOutTarget != "" {
+				setIPCooldown(timedOutTarget)
+				if conn := connectFronting("fallback"); conn != nil {
+					return conn
+				}
+			}
 			doFallback(true, wsFailedRedirect, allRedirect, primaryTarget)
 		}
 		return conn
 	}
 
-	ws := pool.get(cfg, key, primaryTarget, domains)
+	ws := pool.get(cfg, key, wsTarget, domains)
 	fromPool := ws != nil
 	if fromPool {
-		log.Printf("INFO   [%s] DC%d%s -> pool hit via %s", label, hi.DC, mediaTag, primaryTarget)
+		Info("[%s] DC%d%s -> pool hit via %s", label, hi.DC, mediaTag, wsTarget)
 	} else if ws = dialFresh(); ws == nil {
 		return
 	}
@@ -379,6 +431,7 @@ func handleMTProtoClient(client net.Conn, cfg *Config, hi *handshakeInfo, secret
 	}
 
 	clearCooldown(key)
+	clearIPCooldown(wsTarget)
 	atomic.AddInt64(&stats.connectionsWS, 1)
 
 	bridgeWS(label, hi.DC, hi.IsMedia, client, ws, cltDec, cltEnc, tgEnc, tgDec, splitter)

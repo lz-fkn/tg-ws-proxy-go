@@ -7,12 +7,16 @@ import (
 )
 
 var (
-	stats     Stats
-	pool      = newWSPool()
-	blacklist = make(map[dcKey]time.Time)
-	blMu      sync.Mutex
-	failUntil = make(map[dcKey]time.Time)
-	fuMu      sync.Mutex
+	stats         Stats
+	pool          = newWSPool()
+	blacklist     = make(map[dcKey]time.Time)
+	blMu          sync.Mutex
+	failUntil     = make(map[dcKey]time.Time)
+	fuMu          sync.Mutex
+	ipFailUntil   = make(map[string]time.Time)
+	ipFuMu        sync.Mutex
+	frontingUntil time.Time
+	frontingMu    sync.Mutex
 )
 
 func setCooldown(k dcKey) {
@@ -32,6 +36,57 @@ func clearCooldown(k dcKey) {
 	fuMu.Lock()
 	delete(failUntil, k)
 	fuMu.Unlock()
+}
+
+func setIPCooldown(ip string) {
+	if ip == "" {
+		return
+	}
+	ipFuMu.Lock()
+	ipFailUntil[ip] = time.Now().Add(ipFailCooldown)
+	ipFuMu.Unlock()
+}
+
+func inIPCooldown(ip string) bool {
+	if ip == "" {
+		return false
+	}
+	ipFuMu.Lock()
+	t, ok := ipFailUntil[ip]
+	if ok && !time.Now().Before(t) {
+		delete(ipFailUntil, ip)
+		ok = false
+	}
+	ipFuMu.Unlock()
+	return ok
+}
+
+func clearIPCooldown(ip string) {
+	if ip == "" {
+		return
+	}
+	ipFuMu.Lock()
+	delete(ipFailUntil, ip)
+	ipFuMu.Unlock()
+}
+
+func setFrontingActive() {
+	frontingMu.Lock()
+	frontingUntil = time.Now().Add(frontingCooldown)
+	frontingMu.Unlock()
+}
+
+func clearFrontingActive() {
+	frontingMu.Lock()
+	frontingUntil = time.Time{}
+	frontingMu.Unlock()
+}
+
+func frontingActive() bool {
+	frontingMu.Lock()
+	active := time.Now().Before(frontingUntil)
+	frontingMu.Unlock()
+	return active
 }
 
 func setBlacklisted(k dcKey) {

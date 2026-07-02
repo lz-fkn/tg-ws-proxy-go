@@ -73,7 +73,11 @@ func (p *wsPool) refill(cfg *Config, key dcKey, targetIP string, domains []strin
 		if cur >= cfg.PoolSize {
 			return
 		}
-		conn, _, err := wsConnect(targetIP, domains, poolConnectTimeout)
+		connect := wsConnect
+		if frontingActive() {
+			connect = wsConnectFronting
+		}
+		conn, _, err := connect(targetIP, domains, poolConnectTimeout)
 		if err != nil {
 			return
 		}
