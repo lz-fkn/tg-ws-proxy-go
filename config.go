@@ -23,7 +23,7 @@ func parseFlags(args []string) (*Config, error) {
 	printLink := fs.Bool("print-link", false, "Print the tg:// connect link and exit")
 	logLevel := fs.Int("loglevel", 3, "Log Level (0=FATAL, 1=ERROR, 2=WARN, 3=INFO, 4=VERBOSE)")
 	useTimestamps := fs.Bool("timestamps", false, "Show timestamps in logs")
-	bufKB := fs.Int("buf-kb", 256, "Socket buffer size in KB")
+	bufKB := fs.Int("buf-kb", 64, "Socket buffer size in KB")
 	poolSize := fs.Int("pool-size", 4, "WS pool size per DC")
 	fakeTLSDomain := fs.String("fake-tls-domain", "", "Enable Fake TLS (ee-secret) with masking domain (https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/FakeTlsNginx.md)")
 	cfproxyDomain := fs.String("cfproxy-domain", defaultCFProxyDomain, "Cloudflare-proxied domain for WS fallback")

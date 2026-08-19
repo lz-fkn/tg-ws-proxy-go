@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type Config struct {
@@ -31,6 +32,7 @@ type Config struct {
 	PoolSize                     int
 	MaxConns                     int
 	cfproxyMu                    sync.RWMutex
+	cfproxyFailUntil             map[string]time.Time
 	Credits                      bool
 }
 

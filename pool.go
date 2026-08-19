@@ -13,33 +13,45 @@ type pooledWS struct {
 	Created time.Time
 }
 
+type wsPoolKey struct {
+	DC       int
+	IsMedia  bool
+	TargetIP string
+}
+
 type wsPool struct {
 	mu        sync.Mutex
-	idle      map[dcKey][]pooledWS
-	refilling map[dcKey]bool
+	idle      map[wsPoolKey][]pooledWS
+	refilling map[wsPoolKey]bool
 }
+
+var (
+	poolWSConnect         = wsConnect
+	poolWSConnectFronting = wsConnectFronting
+)
 
 func newWSPool() *wsPool {
 	return &wsPool{
-		idle:      make(map[dcKey][]pooledWS),
-		refilling: make(map[dcKey]bool),
+		idle:      make(map[wsPoolKey][]pooledWS),
+		refilling: make(map[wsPoolKey]bool),
 	}
 }
 
 func (p *wsPool) get(cfg *Config, key dcKey, targetIP string, domains []string) *websocket.Conn {
+	poolKey := wsPoolKey{DC: key.DC, IsMedia: key.IsMedia, TargetIP: targetIP}
 	now := time.Now()
 	for {
 		p.mu.Lock()
-		bucket := p.idle[key]
+		bucket := p.idle[poolKey]
 		if len(bucket) == 0 {
-			p.scheduleRefill(cfg, key, targetIP, domains)
+			p.scheduleRefill(cfg, poolKey, domains)
 			p.mu.Unlock()
 			atomic.AddInt64(&stats.poolMisses, 1)
 			return nil
 		}
 		item := bucket[0]
-		p.idle[key] = bucket[1:]
-		p.scheduleRefill(cfg, key, targetIP, domains)
+		p.idle[poolKey] = bucket[1:]
+		p.scheduleRefill(cfg, poolKey, domains)
 		p.mu.Unlock()
 
 		if now.Sub(item.Created) > wsPoolMaxAge {
@@ -51,15 +63,15 @@ func (p *wsPool) get(cfg *Config, key dcKey, targetIP string, domains []string) 
 	}
 }
 
-func (p *wsPool) scheduleRefill(cfg *Config, key dcKey, targetIP string, domains []string) {
+func (p *wsPool) scheduleRefill(cfg *Config, key wsPoolKey, domains []string) {
 	if cfg.PoolSize <= 0 || p.refilling[key] {
 		return
 	}
 	p.refilling[key] = true
-	go p.refill(cfg, key, targetIP, domains)
+	go p.refill(cfg, key, domains)
 }
 
-func (p *wsPool) refill(cfg *Config, key dcKey, targetIP string, domains []string) {
+func (p *wsPool) refill(cfg *Config, key wsPoolKey, domains []string) {
 	defer func() {
 		p.mu.Lock()
 		delete(p.refilling, key)
@@ -73,17 +85,44 @@ func (p *wsPool) refill(cfg *Config, key dcKey, targetIP string, domains []strin
 		if cur >= cfg.PoolSize {
 			return
 		}
-		connect := wsConnect
-		if frontingActive() {
-			connect = wsConnectFronting
+		if inIPCooldown(key.TargetIP) {
+			return
 		}
-		conn, _, err := connect(targetIP, domains, poolConnectTimeout)
+		connect := poolWSConnect
+		if frontingActive() {
+			connect = poolWSConnectFronting
+		}
+		conn, _, err := connect(key.TargetIP, domains, poolConnectTimeout)
 		if err != nil {
 			return
 		}
 		p.mu.Lock()
+		if inIPCooldown(key.TargetIP) {
+			p.mu.Unlock()
+			_ = conn.Close()
+			return
+		}
 		p.idle[key] = append(p.idle[key], pooledWS{Conn: conn, Created: time.Now()})
 		p.mu.Unlock()
+	}
+}
+
+func (p *wsPool) discardTarget(targetIP string) {
+	if targetIP == "" {
+		return
+	}
+	var stale []pooledWS
+	p.mu.Lock()
+	for key, bucket := range p.idle {
+		if key.TargetIP != targetIP {
+			continue
+		}
+		stale = append(stale, bucket...)
+		delete(p.idle, key)
+	}
+	p.mu.Unlock()
+	for _, item := range stale {
+		_ = item.Conn.Close()
 	}
 }
 
@@ -101,10 +140,10 @@ func warmupPool(cfg *Config) {
 			if v, ok := dcOverrides[dcw]; ok {
 				dcw = v
 			}
-			key := dcKey{DC: dc, IsMedia: media}
+			key := wsPoolKey{DC: dc, IsMedia: media, TargetIP: ip}
 			domains := wsDomains(dcw, media)
 			pool.mu.Lock()
-			pool.scheduleRefill(cfg, key, ip, domains)
+			pool.scheduleRefill(cfg, key, domains)
 			pool.mu.Unlock()
 		}
 	}

@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,7 +38,8 @@ func TestPoolDiscardsAgedConn(t *testing.T) {
 
 	p := newWSPool()
 	key := dcKey{DC: 1}
-	p.idle[key] = []pooledWS{{Conn: conn, Created: time.Now().Add(-2 * wsPoolMaxAge)}}
+	poolKey := wsPoolKey{DC: key.DC, IsMedia: key.IsMedia, TargetIP: "1.2.3.4"}
+	p.idle[poolKey] = []pooledWS{{Conn: conn, Created: time.Now().Add(-2 * wsPoolMaxAge)}}
 
 	cfg := &Config{PoolSize: 0} // PoolSize 0 -> no background refill
 	if got := p.get(cfg, key, "1.2.3.4", []string{"d"}); got != nil {
@@ -50,10 +53,142 @@ func TestPoolReturnsFreshConn(t *testing.T) {
 
 	p := newWSPool()
 	key := dcKey{DC: 1}
-	p.idle[key] = []pooledWS{{Conn: conn, Created: time.Now()}}
+	poolKey := wsPoolKey{DC: key.DC, IsMedia: key.IsMedia, TargetIP: "1.2.3.4"}
+	p.idle[poolKey] = []pooledWS{{Conn: conn, Created: time.Now()}}
 
 	cfg := &Config{PoolSize: 0}
 	if got := p.get(cfg, key, "1.2.3.4", []string{"d"}); got != conn {
 		t.Error("fresh pooled conn must be returned as-is")
+	}
+}
+
+func TestPoolRefillKeepsSizeLimit(t *testing.T) {
+	origConnect := poolWSConnect
+	defer func() { poolWSConnect = origConnect }()
+
+	upgrader := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		_, _, _ = c.ReadMessage()
+	}))
+	defer srv.Close()
+	url := "ws" + strings.TrimPrefix(srv.URL, "http")
+
+	var cleanupsMu sync.Mutex
+	var cleanups []func()
+	var calls int64
+	poolWSConnect = func(string, []string, time.Duration) (*websocket.Conn, *http.Response, error) {
+		atomic.AddInt64(&calls, 1)
+		conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		cleanupsMu.Lock()
+		cleanups = append(cleanups, func() { _ = conn.Close() })
+		cleanupsMu.Unlock()
+		return conn, nil, nil
+	}
+	defer func() {
+		cleanupsMu.Lock()
+		defer cleanupsMu.Unlock()
+		for _, cleanup := range cleanups {
+			cleanup()
+		}
+	}()
+
+	p := newWSPool()
+	key := wsPoolKey{DC: 1, TargetIP: "1.2.3.4"}
+	cfg := &Config{PoolSize: 4}
+	p.refill(cfg, key, []string{"d"})
+
+	if got := len(p.idle[key]); got != cfg.PoolSize {
+		t.Fatalf("pool size = %d, want %d", got, cfg.PoolSize)
+	}
+	if got := atomic.LoadInt64(&calls); got != int64(cfg.PoolSize) {
+		t.Fatalf("connect calls = %d, want %d", got, cfg.PoolSize)
+	}
+}
+
+func TestPoolRefillDialsSequentially(t *testing.T) {
+	origConnect := poolWSConnect
+	defer func() { poolWSConnect = origConnect }()
+
+	upgrader := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		_, _, _ = c.ReadMessage()
+	}))
+	defer srv.Close()
+	url := "ws" + strings.TrimPrefix(srv.URL, "http")
+
+	var cleanupsMu sync.Mutex
+	var cleanups []func()
+	var active int64
+	var maxActive int64
+	poolWSConnect = func(string, []string, time.Duration) (*websocket.Conn, *http.Response, error) {
+		cur := atomic.AddInt64(&active, 1)
+		for {
+			max := atomic.LoadInt64(&maxActive)
+			if cur <= max || atomic.CompareAndSwapInt64(&maxActive, max, cur) {
+				break
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+		conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+		atomic.AddInt64(&active, -1)
+		if err != nil {
+			return nil, nil, err
+		}
+		cleanupsMu.Lock()
+		cleanups = append(cleanups, func() { _ = conn.Close() })
+		cleanupsMu.Unlock()
+		return conn, nil, nil
+	}
+	defer func() {
+		cleanupsMu.Lock()
+		defer cleanupsMu.Unlock()
+		for _, cleanup := range cleanups {
+			cleanup()
+		}
+	}()
+
+	p := newWSPool()
+	key := wsPoolKey{DC: 1, TargetIP: "1.2.3.4"}
+	cfg := &Config{PoolSize: 4}
+	p.refill(cfg, key, []string{"d"})
+
+	if got := atomic.LoadInt64(&maxActive); got != 1 {
+		t.Fatalf("max concurrent dials = %d, want 1", got)
+	}
+}
+
+func TestPoolSeparatesTargets(t *testing.T) {
+	conn, cleanup := dialTestWS(t)
+	defer cleanup()
+
+	p := newWSPool()
+	key := dcKey{DC: 1}
+	p.idle[wsPoolKey{DC: 1, TargetIP: "1.2.3.4"}] = []pooledWS{{Conn: conn, Created: time.Now()}}
+
+	if got := p.get(&Config{PoolSize: 0}, key, "5.6.7.8", []string{"d"}); got != nil {
+		t.Fatal("pool must not reuse a connection opened through a different target IP")
+	}
+}
+
+func TestPoolDiscardsTarget(t *testing.T) {
+	conn, cleanup := dialTestWS(t)
+	defer cleanup()
+
+	p := newWSPool()
+	p.idle[wsPoolKey{DC: 1, TargetIP: "1.2.3.4"}] = []pooledWS{{Conn: conn, Created: time.Now()}}
+	p.discardTarget("1.2.3.4")
+	if len(p.idle) != 0 {
+		t.Fatal("discardTarget must remove all pooled connections for the target IP")
 	}
 }

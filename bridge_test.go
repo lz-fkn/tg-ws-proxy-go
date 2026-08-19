@@ -70,7 +70,7 @@ func TestBridgeWSByteIntegrity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	go bridgeWS("test", 2, false, clientProxy, ws, cltDec, cltEnc, tgEnc, tgDec, nil)
+	go bridgeWS("test", &Config{}, 2, false, clientProxy, ws, cltDec, cltEnc, tgEnc, tgDec, nil)
 
 	// Client app sends upstream (encrypted with its send stream == proxy cltDec).
 	c := make([]byte, len(upPlain))

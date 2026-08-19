@@ -28,6 +28,9 @@ func TestParseFlagsDefaults(t *testing.T) {
 	if cfg.PoolSize != 4 || cfg.MaxConns != defaultMaxConns {
 		t.Errorf("poolSize=%d maxConns=%d", cfg.PoolSize, cfg.MaxConns)
 	}
+	if cfg.BufKB != 64 {
+		t.Errorf("buf-kb=%d, want 64", cfg.BufKB)
+	}
 	if !cfg.FallbackCFProxy || !cfg.FallbackCFProxyPriority {
 		t.Error("CF proxy should be enabled, CF-first by default")
 	}

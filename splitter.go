@@ -34,6 +34,18 @@ func (m *msgSplitter) split(chunk []byte) [][]byte {
 		return [][]byte{chunk}
 	}
 
+	if len(m.cipherBuf)+len(chunk) > maxSplitterPacketBytes {
+		parts := make([][]byte, 0, 2)
+		if len(m.cipherBuf) > 0 {
+			parts = append(parts, m.cipherBuf)
+		}
+		parts = append(parts, chunk)
+		m.cipherBuf = nil
+		m.plainBuf = nil
+		m.disabled = true
+		return parts
+	}
+
 	m.cipherBuf = append(m.cipherBuf, chunk...)
 	plainStart := len(m.plainBuf)
 	m.plainBuf = append(m.plainBuf, make([]byte, len(chunk))...)
@@ -100,6 +112,9 @@ func (m *msgSplitter) nextAbridgedLen() int {
 		return 0
 	}
 	packetLen := headerLen + payloadLen
+	if packetLen > maxSplitterPacketBytes {
+		return 0
+	}
 	if len(m.plainBuf) < packetLen {
 		return -1
 	}
@@ -115,6 +130,9 @@ func (m *msgSplitter) nextIntermediateLen() int {
 		return 0
 	}
 	packetLen := 4 + payloadLen
+	if packetLen > maxSplitterPacketBytes {
+		return 0
+	}
 	if len(m.plainBuf) < packetLen {
 		return -1
 	}

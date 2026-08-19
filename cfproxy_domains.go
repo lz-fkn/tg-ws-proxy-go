@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -294,13 +296,14 @@ func (cfg *Config) cfproxyWorkerDomainsForTry() []string {
 }
 
 func (cfg *Config) cfproxyDomainsForTry(dc int) []string {
-	cfg.cfproxyMu.RLock()
-	defer cfg.cfproxyMu.RUnlock()
+	cfg.cfproxyMu.Lock()
+	defer cfg.cfproxyMu.Unlock()
 
 	if len(cfg.FallbackCFProxyDomains) == 0 {
 		return nil
 	}
 
+	now := time.Now()
 	active := normalizeCFProxyDomain(cfg.FallbackCFProxyPerDCActive[dc])
 	if active == "" {
 		active = normalizeCFProxyDomain(cfg.FallbackCFProxyActive)
@@ -309,18 +312,60 @@ func (cfg *Config) cfproxyDomainsForTry(dc int) []string {
 
 	if active != "" {
 		for _, domain := range cfg.FallbackCFProxyDomains {
-			if domain == active {
+			if domain == active && cfg.cfproxyDomainAvailableLocked(domain, now) {
 				out = append(out, domain)
 				break
 			}
 		}
 	}
 	for _, domain := range shuffledDomains(cfg.FallbackCFProxyDomains) {
-		if domain != active {
+		if len(out) == cfProxyMaxAttempts {
+			break
+		}
+		if domain != active && cfg.cfproxyDomainAvailableLocked(domain, now) {
 			out = append(out, domain)
 		}
 	}
 	return out
+}
+
+func (cfg *Config) cfproxyDomainAvailableLocked(domain string, now time.Time) bool {
+	until, failed := cfg.cfproxyFailUntil[domain]
+	if !failed {
+		return true
+	}
+	if now.Before(until) {
+		return false
+	}
+	delete(cfg.cfproxyFailUntil, domain)
+	return true
+}
+
+func (cfg *Config) markCFProxyDomainFailed(domain string, cooldown time.Duration) bool {
+	normalized := normalizeCFProxyDomain(domain)
+	if normalized == "" {
+		return false
+	}
+
+	cfg.cfproxyMu.Lock()
+	defer cfg.cfproxyMu.Unlock()
+	if cfg.cfproxyFailUntil == nil {
+		cfg.cfproxyFailUntil = make(map[string]time.Time)
+	}
+	now := time.Now()
+	if until, failed := cfg.cfproxyFailUntil[normalized]; failed && now.Before(until) {
+		return false
+	}
+	cfg.cfproxyFailUntil[normalized] = now.Add(cooldown)
+	return true
+}
+
+func cfproxyFailureCooldown(err error) time.Duration {
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return cfProxyDNSFailCooldown
+	}
+	return cfProxyFailCooldown
 }
 
 func (cfg *Config) setCFProxyDomains(domains []string) {
@@ -334,6 +379,21 @@ func (cfg *Config) setCFProxyDomains(domains []string) {
 	cfg.cfproxyMu.Lock()
 	cfg.FallbackCFProxyDomains = pool
 	cfg.FallbackCFProxyActive = active
+	if cfg.cfproxyFailUntil == nil {
+		cfg.cfproxyFailUntil = make(map[string]time.Time)
+	}
+	for domain := range cfg.cfproxyFailUntil {
+		found := false
+		for _, current := range pool {
+			if domain == current {
+				found = true
+				break
+			}
+		}
+		if !found {
+			delete(cfg.cfproxyFailUntil, domain)
+		}
+	}
 	if cfg.FallbackCFProxyPerDCActive == nil {
 		cfg.FallbackCFProxyPerDCActive = make(map[int]string)
 	}
@@ -362,6 +422,7 @@ func (cfg *Config) promoteCFProxyDomain(dc int, domain string) {
 			cfg.FallbackCFProxyPerDCActive[dc] = normalized
 			cfg.FallbackCFProxyActive = normalized
 			cfg.FallbackCFProxyDomain = normalized
+			delete(cfg.cfproxyFailUntil, normalized)
 			return
 		}
 	}

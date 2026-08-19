@@ -45,6 +45,7 @@ func setIPCooldown(ip string) {
 	ipFuMu.Lock()
 	ipFailUntil[ip] = time.Now().Add(ipFailCooldown)
 	ipFuMu.Unlock()
+	pool.discardTarget(ip)
 }
 
 func inIPCooldown(ip string) bool {

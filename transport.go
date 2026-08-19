@@ -41,8 +41,7 @@ func dialWSWithSNI(targetIP, domain, sni string, timeout time.Duration) (*websoc
 			InsecureSkipVerify: true,
 		},
 		NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			d := &net.Dialer{Timeout: timeout, KeepAliveConfig: tcpKeepAliveConfig}
-			return d.DialContext(ctx, "tcp", net.JoinHostPort(targetIP, "443"))
+			return newUpstreamDialer(timeout).DialContext(ctx, "tcp", net.JoinHostPort(targetIP, "443"))
 		},
 	}
 	headers := http.Header{}
@@ -51,7 +50,54 @@ func dialWSWithSNI(targetIP, domain, sni string, timeout time.Duration) (*websoc
 	return dialer.Dial(u.String(), headers)
 }
 
-func bridgeWS(label string, dc int, isMedia bool, client net.Conn, ws *websocket.Conn, cltDec, cltEnc, tgEnc, tgDec cipher.Stream, splitter *msgSplitter) {
+func writeWSBinary(ws *websocket.Conn, data []byte) error {
+	if err := ws.SetWriteDeadline(time.Now().Add(wsWriteTimeout)); err != nil {
+		return err
+	}
+	err := ws.WriteMessage(websocket.BinaryMessage, data)
+	if err == nil {
+		_ = ws.SetWriteDeadline(time.Time{})
+	}
+	return err
+}
+
+func writeTCPRelayInit(conn net.Conn, relayInit []byte) error {
+	if err := conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)); err != nil {
+		return err
+	}
+	_, err := conn.Write(relayInit)
+	if err == nil {
+		_ = conn.SetWriteDeadline(time.Time{})
+	}
+	return err
+}
+
+func runIdleWatchdog(lastActivity *atomic.Int64, stop <-chan struct{}, timeout, checkInterval time.Duration, onIdle func()) {
+	ticker := time.NewTicker(checkInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			if time.Now().UnixNano()-lastActivity.Load() >= timeout.Nanoseconds() {
+				onIdle()
+				return
+			}
+		}
+	}
+}
+
+func startIdleWatchdog(lastActivity *atomic.Int64, stop <-chan struct{}, onIdle func()) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runIdleWatchdog(lastActivity, stop, ioIdleTimeout, idleWatchdogCheckInterval, onIdle)
+	}()
+	return done
+}
+
+func bridgeWS(label string, cfg *Config, dc int, isMedia bool, client net.Conn, ws *websocket.Conn, cltDec, cltEnc, tgEnc, tgDec cipher.Stream, splitter *msgSplitter) {
 	mediaTag := ""
 	if isMedia {
 		mediaTag = "m"
@@ -61,6 +107,13 @@ func bridgeWS(label string, dc int, isMedia bool, client net.Conn, ws *websocket
 	var upPkts, downPkts int64
 
 	done := make(chan struct{}, 2)
+	stopIdleWatchdog := make(chan struct{})
+	var lastActivity atomic.Int64
+	lastActivity.Store(time.Now().UnixNano())
+	idleWatchdogDone := startIdleWatchdog(&lastActivity, stopIdleWatchdog, func() {
+		_ = ws.Close()
+		_ = client.Close()
+	})
 
 	go func() {
 		defer func() { done <- struct{}{} }()
@@ -73,9 +126,9 @@ func bridgeWS(label string, dc int, isMedia bool, client net.Conn, ws *websocket
 			}
 		}()
 		for {
-			_ = client.SetReadDeadline(time.Now().Add(ioIdleTimeout))
 			n, err := client.Read(buf)
 			if n > 0 {
+				lastActivity.Store(time.Now().UnixNano())
 				upPending += int64(n)
 				upBytes += int64(n)
 				upPkts++
@@ -128,7 +181,6 @@ func bridgeWS(label string, dc int, isMedia bool, client net.Conn, ws *websocket
 			}
 		}()
 		for {
-			_ = ws.SetReadDeadline(time.Now().Add(ioIdleTimeout))
 			mt, r, err := ws.NextReader()
 			if err != nil {
 				return
@@ -140,6 +192,7 @@ func bridgeWS(label string, dc int, isMedia bool, client net.Conn, ws *websocket
 			for {
 				nr, rerr := r.Read(buf)
 				if nr > 0 {
+					lastActivity.Store(time.Now().UnixNano())
 					n := int64(nr)
 					downPending += n
 					downBytes += n
@@ -166,9 +219,12 @@ func bridgeWS(label string, dc int, isMedia bool, client net.Conn, ws *websocket
 	}()
 
 	<-done
+	close(stopIdleWatchdog)
 	_ = ws.Close()
 	_ = client.Close()
-	Info("[%s] DC%d%s WS session closed: ^%s (%d pkts) v%s (%d pkts) in %.1fs",
+	<-done
+	<-idleWatchdogDone
+	Verbose("[%s] DC%d%s WS session closed: ^%s (%d pkts) v%s (%d pkts) in %.1fs",
 		label,
 		dc,
 		mediaTag,
@@ -181,7 +237,7 @@ func bridgeWS(label string, dc int, isMedia bool, client net.Conn, ws *websocket
 }
 
 func tcpFallback(client net.Conn, dst string, relayInit []byte, cltDec, cltEnc, tgEnc, tgDec cipher.Stream) error {
-	r, err := net.DialTimeout("tcp", net.JoinHostPort(dst, "443"), tcpDialTimeout)
+	r, err := newUpstreamDialer(tcpDialTimeout).Dial("tcp", net.JoinHostPort(dst, "443"))
 	if err != nil {
 		Warn("TCP fallback to %s:443 failed: %v", dst, err)
 		return err
@@ -189,11 +245,18 @@ func tcpFallback(client net.Conn, dst string, relayInit []byte, cltDec, cltEnc, 
 	defer r.Close()
 	atomic.AddInt64(&stats.connectionsTCP, 1)
 
-	if _, err := r.Write(relayInit); err != nil {
+	if err := writeTCPRelayInit(r, relayInit); err != nil {
 		return err
 	}
 
 	done := make(chan struct{}, 2)
+	stopIdleWatchdog := make(chan struct{})
+	var lastActivity atomic.Int64
+	lastActivity.Store(time.Now().UnixNano())
+	idleWatchdogDone := startIdleWatchdog(&lastActivity, stopIdleWatchdog, func() {
+		_ = client.Close()
+		_ = r.Close()
+	})
 	go func() {
 		defer func() { done <- struct{}{} }()
 		buf := ioBufPool.Get().([]byte)
@@ -208,6 +271,7 @@ func tcpFallback(client net.Conn, dst string, relayInit []byte, cltDec, cltEnc, 
 			_ = client.SetReadDeadline(time.Now().Add(ioIdleTimeout))
 			n, err := client.Read(buf)
 			if n > 0 {
+				lastActivity.Store(time.Now().UnixNano())
 				upPending += int64(n)
 				if upPending >= statsFlushBytes {
 					atomic.AddInt64(&stats.bytesUp, upPending)
@@ -238,9 +302,9 @@ func tcpFallback(client net.Conn, dst string, relayInit []byte, cltDec, cltEnc, 
 			}
 		}()
 		for {
-			_ = r.SetReadDeadline(time.Now().Add(ioIdleTimeout))
 			n, err := r.Read(buf)
 			if n > 0 {
+				lastActivity.Store(time.Now().UnixNano())
 				downPending += int64(n)
 				if downPending >= statsFlushBytes {
 					atomic.AddInt64(&stats.bytesDown, downPending)
@@ -261,8 +325,11 @@ func tcpFallback(client net.Conn, dst string, relayInit []byte, cltDec, cltEnc, 
 	}()
 
 	<-done
+	close(stopIdleWatchdog)
 	_ = client.Close()
 	_ = r.Close()
+	<-done
+	<-idleWatchdogDone
 	return nil
 }
 
@@ -300,6 +367,9 @@ func dialWSByDomain(domain string, timeout time.Duration) (*websocket.Conn, *htt
 			ServerName:         domain,
 			InsecureSkipVerify: true,
 		},
+		NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return newUpstreamDialer(timeout).DialContext(ctx, network, addr)
+		},
 	}
 	headers := http.Header{}
 	headers.Set("Host", domain)
@@ -317,6 +387,9 @@ func dialWSWorker(worker, dst string, dc int, timeout time.Duration) (*websocket
 		TLSClientConfig: &tls.Config{
 			ServerName:         worker,
 			InsecureSkipVerify: true,
+		},
+		NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return newUpstreamDialer(timeout).DialContext(ctx, network, addr)
 		},
 	}
 	headers := http.Header{}
@@ -343,14 +416,14 @@ func cfWorkerFallback(label string, cfg *Config, dc int, isMedia bool, dst strin
 			continue
 		}
 
-		if err := ws.WriteMessage(websocket.BinaryMessage, relayInit); err != nil {
+		if err := writeWSBinary(ws, relayInit); err != nil {
 			_ = ws.Close()
 			Warn("[%s] DC%d%s CF worker init write failed: %v", label, dc, mediaTag, err)
 			continue
 		}
 
 		atomic.AddInt64(&stats.connectionsCF, 1)
-		bridgeWS(label, dc, isMedia, client, ws, cltDec, cltEnc, tgEnc, tgDec, splitter)
+		bridgeWS(label, cfg, dc, isMedia, client, ws, cltDec, cltEnc, tgEnc, tgDec, splitter)
 		return nil
 	}
 
@@ -365,27 +438,32 @@ func cfproxyFallback(label string, cfg *Config, dc int, isMedia bool, client net
 
 	for _, baseDomain := range cfg.cfproxyDomainsForTry(dc) {
 		domain := fmt.Sprintf("kws%d.%s", dc, baseDomain)
-		Info("[%s] DC%d%s -> CF proxy wss://%s/apiws", label, dc, mediaTag, domain)
+		Verbose("[%s] DC%d%s -> CF proxy wss://%s/apiws", label, dc, mediaTag, domain)
 		ws, resp, err := dialWSByDomain(domain, wsConnectTimeout)
 		if err != nil {
 			atomic.AddInt64(&stats.wsErrors, 1)
+			firstFailure := cfg.markCFProxyDomainFailed(baseDomain, cfproxyFailureCooldown(err))
 			if resp != nil && isRedirect(resp.StatusCode) {
-				Warn("[%s] DC%d%s CF proxy got %d from %s", label, dc, mediaTag, resp.StatusCode, domain)
-			} else {
+				if firstFailure {
+					Warn("[%s] DC%d%s CF proxy got %d from %s; cooling down", label, dc, mediaTag, resp.StatusCode, domain)
+				}
+			} else if firstFailure {
 				Warn("[%s] DC%d%s CF proxy %s failed: %v", label, dc, mediaTag, domain, err)
 			}
 			continue
 		}
 
-		if err := ws.WriteMessage(websocket.BinaryMessage, relayInit); err != nil {
+		if err := writeWSBinary(ws, relayInit); err != nil {
 			_ = ws.Close()
-			Warn("[%s] DC%d%s CF proxy init write failed: %v", label, dc, mediaTag, err)
+			if cfg.markCFProxyDomainFailed(baseDomain, cfProxyFailCooldown) {
+				Warn("[%s] DC%d%s CF proxy init write failed: %v", label, dc, mediaTag, err)
+			}
 			continue
 		}
 
 		atomic.AddInt64(&stats.connectionsCF, 1)
 		cfg.promoteCFProxyDomain(dc, baseDomain)
-		bridgeWS(label, dc, isMedia, client, ws, cltDec, cltEnc, tgEnc, tgDec, splitter)
+		bridgeWS(label, cfg, dc, isMedia, client, ws, cltDec, cltEnc, tgEnc, tgDec, splitter)
 		return nil
 	}
 

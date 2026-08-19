@@ -325,18 +325,17 @@ func handleMTProtoClient(client net.Conn, cfg *Config, hi *handshakeInfo, secret
 	}
 	domains := wsDomains(dcW, hi.IsMedia)
 	key := dcKey{DC: hi.DC, IsMedia: hi.IsMedia}
-	connectWS := func(timeout time.Duration) (*websocket.Conn, bool, bool, bool, string) {
+	connectWS := func(timeout time.Duration) (*websocket.Conn, string, bool, bool, bool) {
 		wsFailedRedirect := false
 		allRedirect := true
 		timedOut := false
-		timedOutTarget := ""
 		for _, target := range directTargets {
 			for _, d := range domains {
 				Verbose("[%s] DC%d%s -> wss://%s/apiws via %s", label, hi.DC, mediaTag, d, target)
 				conn, resp, err := dialWS(target, d, timeout)
 				if err == nil {
 					allRedirect = false
-					return conn, wsFailedRedirect, allRedirect, timedOut, timedOutTarget
+					return conn, target, wsFailedRedirect, allRedirect, timedOut
 				}
 				atomic.AddInt64(&stats.wsErrors, 1)
 				if resp != nil && isRedirect(resp.StatusCode) {
@@ -346,7 +345,10 @@ func handleMTProtoClient(client net.Conn, cfg *Config, hi *handshakeInfo, secret
 				}
 				if isTimeoutError(err) {
 					timedOut = true
-					timedOutTarget = target
+					allRedirect = false
+					if hasAnyCFFallback {
+						setIPCooldown(target)
+					}
 					Warn("[%s] DC%d%s WS connect timed out via %s", label, hi.DC, mediaTag, target)
 					break
 				}
@@ -354,10 +356,10 @@ func handleMTProtoClient(client net.Conn, cfg *Config, hi *handshakeInfo, secret
 				Warn("[%s] DC%d%s WS connect failed via %s: %v", label, hi.DC, mediaTag, target, err)
 			}
 		}
-		return nil, wsFailedRedirect, allRedirect, timedOut, timedOutTarget
+		return nil, "", wsFailedRedirect, allRedirect, timedOut
 	}
 
-	connectFronting := func(reason string) *websocket.Conn {
+	connectFronting := func(reason string) (*websocket.Conn, string) {
 		for _, target := range directTargets {
 			Info("[%s] DC%d%s -> fronting %s via %s", label, hi.DC, mediaTag, reason, target)
 			conn, _, err := wsConnectFronting(target, domains, wsConnectTimeout)
@@ -365,18 +367,18 @@ func handleMTProtoClient(client net.Conn, cfg *Config, hi *handshakeInfo, secret
 				setFrontingActive()
 				atomic.AddInt64(&stats.connectionsFront, 1)
 				Info("[%s] DC%d%s fronting OK for %ds", label, hi.DC, mediaTag, int(frontingCooldown.Seconds()))
-				return conn
+				return conn, target
 			}
 			atomic.AddInt64(&stats.wsErrors, 1)
 			Warn("[%s] DC%d%s fronting failed via %s: %v", label, hi.DC, mediaTag, target, err)
 		}
-		return nil
+		return nil, ""
 	}
 
-	dialFresh := func() *websocket.Conn {
+	dialFresh := func() (*websocket.Conn, string, bool) {
 		if frontingActive() {
-			if conn := connectFronting("active"); conn != nil {
-				return conn
+			if conn, target := connectFronting("active"); conn != nil {
+				return conn, target, false
 			}
 			clearFrontingActive()
 		}
@@ -384,25 +386,29 @@ func handleMTProtoClient(client net.Conn, cfg *Config, hi *handshakeInfo, secret
 		if inCooldown(key) {
 			timeout = wsConnectCooldownTimeout
 		}
-		conn, wsFailedRedirect, allRedirect, timedOut, timedOutTarget := connectWS(timeout)
+		conn, target, wsFailedRedirect, allRedirect, timedOut := connectWS(timeout)
 		if conn == nil {
-			if timedOut && timedOutTarget != "" {
-				setIPCooldown(timedOutTarget)
-				if conn := connectFronting("fallback"); conn != nil {
-					return conn
+			if timedOut {
+				if conn, target := connectFronting("fallback"); conn != nil {
+					return conn, target, false
 				}
 			}
 			doFallback(true, wsFailedRedirect, allRedirect, primaryTarget)
 		}
-		return conn
+		return conn, target, conn != nil
 	}
 
 	ws := pool.get(cfg, key, wsTarget, domains)
+	usedTarget := wsTarget
+	directWS := false
 	fromPool := ws != nil
 	if fromPool {
 		Info("[%s] DC%d%s -> pool hit via %s", label, hi.DC, mediaTag, wsTarget)
-	} else if ws = dialFresh(); ws == nil {
-		return
+	} else {
+		ws, usedTarget, directWS = dialFresh()
+		if ws == nil {
+			return
+		}
 	}
 
 	var splitter *msgSplitter
@@ -410,7 +416,7 @@ func handleMTProtoClient(client net.Conn, cfg *Config, hi *handshakeInfo, secret
 		splitter = ms
 	}
 
-	if err := ws.WriteMessage(websocket.BinaryMessage, relayInit); err != nil {
+	if err := writeWSBinary(ws, relayInit); err != nil {
 		Warn("[%s] ws init write failed: %v", label, err)
 		_ = ws.Close()
 		if !fromPool {
@@ -418,10 +424,11 @@ func handleMTProtoClient(client net.Conn, cfg *Config, hi *handshakeInfo, secret
 			doFallback(false, false, false, primaryTarget)
 			return
 		}
-		if ws = dialFresh(); ws == nil {
+		ws, usedTarget, directWS = dialFresh()
+		if ws == nil {
 			return
 		}
-		if err := ws.WriteMessage(websocket.BinaryMessage, relayInit); err != nil {
+		if err := writeWSBinary(ws, relayInit); err != nil {
 			Warn("[%s] ws init write failed after pool retry: %v", label, err)
 			_ = ws.Close()
 			setCooldown(key)
@@ -431,8 +438,10 @@ func handleMTProtoClient(client net.Conn, cfg *Config, hi *handshakeInfo, secret
 	}
 
 	clearCooldown(key)
-	clearIPCooldown(wsTarget)
+	if directWS {
+		clearIPCooldown(usedTarget)
+	}
 	atomic.AddInt64(&stats.connectionsWS, 1)
 
-	bridgeWS(label, hi.DC, hi.IsMedia, client, ws, cltDec, cltEnc, tgEnc, tgDec, splitter)
+	bridgeWS(label, cfg, hi.DC, hi.IsMedia, client, ws, cltDec, cltEnc, tgEnc, tgDec, splitter)
 }

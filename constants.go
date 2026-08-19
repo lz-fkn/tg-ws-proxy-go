@@ -20,7 +20,8 @@ const (
 	dcFailCooldown                       = 60 * time.Second
 	frontingCooldown                     = 30 * time.Minute
 	dcBlacklistTTL                       = 10 * time.Minute
-	ioIdleTimeout                        = 90 * time.Second
+	ioIdleTimeout                        = 5 * time.Minute
+	idleWatchdogCheckInterval            = 5 * time.Second
 	wsWriteTimeout                       = 15 * time.Second
 	wsConnectTimeout                     = 5 * time.Second
 	wsConnectCooldownTimeout             = 2 * time.Second
@@ -31,15 +32,19 @@ const (
 	fakeTLSDrainGrace                    = 1 * time.Second
 	statsLogInterval                     = 60 * time.Second
 	statsFlushBytes                      = 256 * 1024
+	maxSplitterPacketBytes               = 8 * 1024 * 1024
 	acceptPollTimeout                    = 1 * time.Second
 	acceptBackoffMin                     = 5 * time.Millisecond
 	acceptBackoffMax                     = 1 * time.Second
-	defaultMaxConns                      = 1024
+	defaultMaxConns                      = 256
 	defaultCFProxyDomain                 = "pclead.co.uk"
 	defaultCFProxyDomainsURL             = "https://raw.githubusercontent.com/Flowseal/tg-ws-proxy/main/.github/cfproxy-domains.txt"
 	defaultCFProxyRefreshTimeout         = 10 * time.Second
 	defaultCFProxyRefreshInterval        = 1 * time.Hour
 	defaultCFProxyRefreshMinValidDomains = 3
+	cfProxyMaxAttempts                   = 3
+	cfProxyDNSFailCooldown               = 5 * time.Minute
+	cfProxyFailCooldown                  = 1 * time.Minute
 )
 
 var (

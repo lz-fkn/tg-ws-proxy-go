@@ -17,6 +17,10 @@ var tcpKeepAliveConfig = net.KeepAliveConfig{
 	Count:    3,
 }
 
+func newUpstreamDialer(timeout time.Duration) *net.Dialer {
+	return &net.Dialer{Timeout: timeout, KeepAliveConfig: tcpKeepAliveConfig}
+}
+
 func formatFloat(v float64) string {
 	return fmt.Sprintf("%.1f", v)
 }

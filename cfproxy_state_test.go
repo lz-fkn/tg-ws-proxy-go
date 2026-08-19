@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestSetAndTryCFProxyDomains(t *testing.T) {
 	cfg := &Config{}
@@ -68,4 +71,63 @@ func TestCFProxyWorkerDomains(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("worker domains = %v, want 2", got)
 	}
+}
+
+func TestCFProxyDomainsSkipCooldownAndLimitAttempts(t *testing.T) {
+	cfg := &Config{}
+	cfg.setCFProxyDomains([]string{"a.tld", "b.tld", "c.tld", "d.tld"})
+	cfg.promoteCFProxyDomain(2, "a.tld")
+	if !cfg.markCFProxyDomainFailed("a.tld", time.Minute) {
+		t.Fatal("first failure must start cooldown")
+	}
+	if cfg.markCFProxyDomainFailed("a.tld", time.Minute) {
+		t.Fatal("second failure during cooldown must be suppressed")
+	}
+
+	order := cfg.cfproxyDomainsForTry(2)
+	if len(order) != cfProxyMaxAttempts {
+		t.Fatalf("cfproxyDomainsForTry returned %d domains, want %d", len(order), cfProxyMaxAttempts)
+	}
+	for _, domain := range order {
+		if domain == "a.tld" {
+			t.Fatalf("cooled-down domain was returned: %v", order)
+		}
+	}
+}
+
+func TestCFProxyDomainCooldownExpiresAndSuccessClearsIt(t *testing.T) {
+	cfg := &Config{}
+	cfg.setCFProxyDomains([]string{"a.tld", "b.tld"})
+	if !cfg.markCFProxyDomainFailed("b.tld", time.Minute) {
+		t.Fatal("first failure must start cooldown")
+	}
+	cfg.promoteCFProxyDomain(2, "b.tld")
+
+	cfg.cfproxyMu.RLock()
+	_, stillFailed := cfg.cfproxyFailUntil["b.tld"]
+	cfg.cfproxyMu.RUnlock()
+	if stillFailed {
+		t.Fatal("successful domain must clear cooldown")
+	}
+
+	if !cfg.markCFProxyDomainFailed("a.tld", time.Minute) {
+		t.Fatal("first failure must start cooldown")
+	}
+	cfg.cfproxyMu.Lock()
+	cfg.cfproxyFailUntil["a.tld"] = time.Now().Add(-time.Second)
+	cfg.cfproxyMu.Unlock()
+
+	order := cfg.cfproxyDomainsForTry(2)
+	if !containsCFProxyDomain(order, "a.tld") {
+		t.Fatalf("expired cooldown must allow domain: %v", order)
+	}
+}
+
+func containsCFProxyDomain(domains []string, wanted string) bool {
+	for _, domain := range domains {
+		if domain == wanted {
+			return true
+		}
+	}
+	return false
 }

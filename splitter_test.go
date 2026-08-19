@@ -127,6 +127,25 @@ func TestSplitterDisableOnZeroLen(t *testing.T) {
 	}
 }
 
+func TestSplitterDisablesOversizedPacket(t *testing.T) {
+	ri := testRelayInit(t)
+	ms, err := newMsgSplitter(ri, protoIntermediateInt)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	plain := make([]byte, 4)
+	binary.LittleEndian.PutUint32(plain, maxSplitterPacketBytes)
+	ct := encForSplitter(t, ri, plain)
+	parts := ms.split(ct)
+	if len(parts) != 1 || !bytes.Equal(parts[0], ct) {
+		t.Fatal("oversized packet header must disable splitter and pass data through")
+	}
+	if !ms.disabled || len(ms.cipherBuf) != 0 || len(ms.plainBuf) != 0 {
+		t.Fatal("oversized packet must not remain buffered")
+	}
+}
+
 func lensOf(parts [][]byte) []int {
 	out := make([]int, len(parts))
 	for i, p := range parts {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"testing"
+	"time"
 )
 
 type testTimeoutError struct{}
@@ -60,5 +61,15 @@ func TestIsTimeoutError(t *testing.T) {
 	}
 	if isTimeoutError(nil) {
 		t.Fatal("nil should not be timeout")
+	}
+}
+
+func TestNewUpstreamDialerUsesKeepAliveConfig(t *testing.T) {
+	d := newUpstreamDialer(time.Second)
+	if d.Timeout != time.Second {
+		t.Fatalf("timeout = %s, want 1s", d.Timeout)
+	}
+	if d.KeepAliveConfig != tcpKeepAliveConfig {
+		t.Fatalf("keepalive config = %#v, want %#v", d.KeepAliveConfig, tcpKeepAliveConfig)
 	}
 }
