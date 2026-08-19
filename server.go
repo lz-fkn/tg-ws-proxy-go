@@ -18,6 +18,9 @@ import (
 func main() {
 	cfg, err := parseFlags(os.Args[1:])
 	if err != nil {
+		if err.Error() == "flag: help requested" {
+			return
+		}
 		Fatal("config error: %v", err)
 	}
 	if cfg.GenSecret {
